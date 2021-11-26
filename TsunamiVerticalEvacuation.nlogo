@@ -3,12 +3,14 @@ extensions [
   gis
   pathdir
   py
+  table
 ]
 
 patches-own [ zt ]  ; zt es la altura que alcanza el tsunami
 
 breed [ nodes node ]
 breed [ shelters shelter]
+breed [ pedestrians pedestrian ]
 
 nodes-own[
   id
@@ -21,7 +23,15 @@ shelters-own[
   evac_type
 ]
 
+pedestrians-own[
+  id
+  age
+  depar_time
+  speed
+]
+
 globals [
+  config
   urban_network_dataset
   node_dataset
   shelter_dataset
@@ -106,16 +116,32 @@ end
 
 to load-nodes
   ask nodes [die]
-  gis:create-turtles-from-points node_dataset nodes
-  ask nodes [set route split-nodes route]  ; strings have a maximum length
+  gis:create-turtles-from-points node_dataset nodes [
+    set size 0.6
+    set color white
+    set shape "circle"
+  ]
+  ask nodes [
+    set route split-nodes route
+  ]  ; strings have a maximum length
   print "Nodes Loaded"
 end
 
-to make-shelter-turtles
+
+to load-shelters
   ask shelters [ die ]
   gis:create-turtles-from-points shelter_dataset shelters [
     set color red
     set shape "star"
+  ]
+end
+
+to load-pedestrians
+  ask pedestrians [ die ]
+  gis:create-turtles-from-points agent_distribution_dataset pedestrians [
+    set color yellow
+    set shape "person"
+    set size 0.6
   ]
 end
 
@@ -158,11 +184,12 @@ to setup
   reset-ticks
   random-seed 100
   py:setup py:python
+  set config table:from-json-file "data/config.json"
   ;gis:set-drawing-color white
   read-gis-files
-  make-shelter-turtles
-  ;gis:draw nodes_dataset 1
   load-nodes
+  load-shelters
+  load-pedestrians
 end
 
 to go
@@ -180,13 +207,13 @@ to go
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
-210
+213
 10
-647
-448
+826
+624
 -1
 -1
-13.0
+5.0
 1
 10
 1
@@ -196,10 +223,10 @@ GRAPHICS-WINDOW
 1
 1
 1
--16
-16
--16
-16
+-60
+60
+-60
+60
 0
 0
 1
