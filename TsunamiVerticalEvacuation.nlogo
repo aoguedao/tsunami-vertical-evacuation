@@ -6,7 +6,9 @@ extensions [
   table
 ]
 
-patches-own [ zt ]  ; zt es la altura que alcanza el tsunami
+patches-own [
+  flood  ; tsunami flood
+]
 
 breed [ nodes node ]
 breed [ shelters shelter]
@@ -15,7 +17,8 @@ breed [ pedestrians pedestrian ]
 nodes-own[
   id
   shelter_id
-  route
+  next_id
+  shelter?
 ]
 
 shelters-own[
@@ -23,26 +26,36 @@ shelters-own[
   evac_type
 ]
 
+
 pedestrians-own[
   id
   age
   depar_time
-  speed
+
+  base_speed         ; average speed according to pedestrian age
+  current_speed      ; current speed
+  slope_factor       ; TODO
+  density_factor     ; TODO
+
+  current_node       ; current node of their evacuation route
+  next_node          ; next node of their evacuation route
+  evacuation_route   ; DEPRECATED???
+  goal_shelter       ; goal shelter of their evacuation route
+
+  started?           ; True if the pedestrian has started to evacuate
+  moving?            ; True if the pedestrian is evacuating (and their is not dead)
+  in_node?           ; True if the pedestrian is on a node
+  evacuated?         ; True if the pedestrian reach their goal shelter
+  dead?              ; True if the pedestrian is on a patch with flood > FOOLD_THRESHOLD
 ]
 
 globals [
-  config
-  urban_network_dataset
-  node_dataset
-  shelter_dataset
-  agent_distribution_dataset
-  tsunami_sample_dataset
-
-  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-  ;;;;;;;;;;;;   TSUNAMI   ;;;;;;;;;;;;
-  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-  cont-tsu    ; Variable para ingresar el número del archivo de altura de la carpeta "BDTsunami"
-  nombre-archivo-tsunami
+  config                      ; Configuration table readed from a JSON file
+  urban_network_dataset       ; Urban network edges dataset
+  node_dataset                ; Urban network nodes dataset
+  shelter_dataset             ; Shelters dataset
+  agent_distribution_dataset  ; Agent distribution dataset
+  tsunami_sample_dataset      ; Sample tsunami inundation raster dataset
 
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;;;;;;;;; CONVERSION RATIOS ;;;;;;;;;
@@ -63,12 +76,11 @@ globals [
 ]
 
 
-to-report split-nodes [string]
-  py:set "string" string
-  py:set "delimiter" "&"
-  report py:runresult "[int(float(x)) for x in string.split(delimiter) if len(x) != 0]"
+to-report who-number [node_id]
+  ; return who number based on node id
+  let who_number [who] of nodes with [id = node_id]
+  report item 0 who_number
 end
-
 
 
 to read-gis-files
@@ -115,35 +127,158 @@ end
 
 
 to load-nodes
+  ; load urban network nodes
   ask nodes [die]
   gis:create-turtles-from-points node_dataset nodes [
     set size 0.6
     set color white
     set shape "circle"
+    set shelter? false
+    set evac_type "None"
   ]
   ask nodes [
-    set route split-nodes route
+    set next_node map who-number next_node
   ]  ; strings have a maximum length
   print "Nodes Loaded"
 end
 
 
 to load-shelters
+  ; load temporarily shelter dataset in order to give their attributes to shelter nodes
   ask shelters [ die ]
-  gis:create-turtles-from-points shelter_dataset shelters [
-    set color red
-    set shape "star"
+  gis:create-turtles-from-points shelter_dataset shelters
+  ask nodes [
+    foreach [who] of shelters [
+      i ->
+      if [id] of self = [id] of shelter i [
+        set color green
+        set shape "target"
+        set size 1
+        set shelter? true
+        set evac_type [evac_type] of shelter i
+      ]
+    ]
+
+  ]
+  ask shelters [ die ]
+end
+
+
+to load-pedestrians
+  ; load pedestrian distribution
+  ask pedestrians [ die ]
+  gis:create-turtles-from-points agent_distribution_dataset pedestrians [
+    set size 0.6
+    set color yellow
+    set shape "face neutral"
+    set started? false
+    set moving? false
+    set in_node? false
+    set evacuated? false
+    set dead? false
+    set slope_factor 1
+    set density_factor 1
+  ]
+  ; ###########
+  ; Delete this, only for debugging
+  ask n-of (count pedestrians / 100 * 95) pedestrians [ die ]
+  ; ###########
+end
+
+
+to initial-move
+  ; validate if pedestrian must start to evacuate according their departure time
+  ask pedestrians with [not started? and depar_time >= ticks] ; / ticks_to_second]
+    [
+      let node_goal_shelter [shelter_id] of next_node
+      set goal_shelter node_goal_shelter
+      set current_node "None"
+      set next_node min-one-of nodes [distance myself]
+      ;set evacuation_route [route] of next_node ; revisar sintaxis
+      ;set evacuation_route insert-item 0 evacuation_route [who] of next_node
+      set started? true
+      set moving? true
+      set in_node? true
   ]
 end
 
-to load-pedestrians
-  ask pedestrians [ die ]
-  gis:create-turtles-from-points agent_distribution_dataset pedestrians [
-    set color yellow
-    set shape "person"
-    set size 0.6
+
+to update-moving
+  ;TODO: new procedure "update moving"..first section
+  ask pedestrians with [
+    started?
+    and in_node?
+    and not evacuated?
+    and not dead?
+  ][
+    set next_node [next_node] of node next_node
+    set heading towards next_node
   ]
 end
+
+
+to update-speed
+  ; update pedestrian speed according pedestrians density and route slope
+  ask pedestrians with [moving?][
+    ;;;;;;; SLOPE ;;;;;;
+    if in_node? = true [
+      ifelse current_node = "None" [
+        set in_node? false][
+        let n2 next_node
+        let n1 current_node
+        let slope precision (([elevation] of n2 - [elevation] of n1) / (([distance n2] of n1) * patch_to_meter)) 3
+        set slope_factor precision (exp(-3.5 * abs(slope + 0.05) + 0.175)) 3
+        set in_node? false
+      ]
+    ]
+
+    ;;;;;; DENSITY ;;;;;
+    ; TODO: CHANGE NAMES
+    let km 5.4;
+    let b 6  ; ancho de calle
+    let d 3
+    let Nv (count (turtle-set other pedestrians in-radius (d / patch_to_meter)) + 1)   ; para contar al mismo agente en la densidad
+    let k (Nv / (d * b))
+    ifelse k < km
+      [
+        set density_factor precision (1 - EXP(-1.913 * (1 / k - 1 / km))) 3
+      ]
+      [
+        set density_factor 0.01
+      ]
+
+    ;;;;;; SPEED ;;;;;;
+    set actual_speed base_speed * slope_factor * density_factor
+  ]
+
+
+end
+
+
+to move-pedestrians
+  ask pedestrians with [moving? and not in_node?][
+    ; TODO: add refresh-speed
+
+    ifelse actual_speed > distance next_node
+      [
+        fd distance next_node
+      ][
+        fd actual_speed
+      ]    ; notar que la velocidad en el modelo de mostafizi se mide en parcelas/tick
+    if (distance next_node < 0.005 ) [  ; TODO: add epsilon in meters * meters_to_...
+      set in_node? true
+      set current_node next_node
+      if [shelter?] of current_node = true [
+        set evacuated? true
+        set moving? false
+        set shape "face happy"
+        set color green
+      ]
+    ]
+  ]
+end
+
+
 
 
 to correr-tsunami
@@ -158,16 +293,16 @@ to correr-tsunami
 
     let inundation gis:load-dataset nombre-archivo-tsunami
     gis:set-world-envelope (gis:envelope-of inundation)
-    gis:apply-raster inundation zt
-    ask patches with [zt = 0][set zt -9999]
+    gis:apply-raster inundation flood
+    ask patches with [flood = 0][set flood -9999]
 
     ; TODO: GET GLOBAL MIN MAX INUNDATION BEFORE AND USE A GOOD SCALE
     let min-inundation gis:minimum-of inundation
     let max-inundation gis:maximum-of inundation
 
     ask patches [
-      if (zt >= min-inundation) and (zt <= max-inundation) [
-        set pcolor scale-color blue zt min-inundation max-inundation
+      if (flood >= min-inundation) and (flood <= max-inundation) [
+        set pcolor scale-color blue flood min-inundation max-inundation
       ]
     ]
     display
@@ -182,8 +317,8 @@ end
 to setup
   clear-all
   reset-ticks
-  random-seed 100
-  py:setup py:python
+  ;random-seed 100
+  ;py:setup py:python
   set config table:from-json-file "data/config.json"
   ;gis:set-drawing-color white
   read-gis-files
@@ -194,11 +329,14 @@ end
 
 to go
   if ticks = 0 [reset-timer no-display] ; Se resetea el cronómetro
-  if ticks >= 0 [correr-tsunami] ; Asumiendo que los raster se consideran desde el inicio de la modelación
+  initial-move
+  update-moving
+  update-speed
+  move-pedestrians
 
   tick
-
-  if ticks = (60 * 60) ; TS es el tiempo total de simulación del modelo ingresado en minutos
+  display
+  if ticks = (1000) ; TS es el tiempo total de simulación del modelo ingresado en minutos
   [ output-print (word "Tiempo Total:" timer " seg.")
 
     stop
