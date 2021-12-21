@@ -7,25 +7,26 @@ extensions [
 ]
 
 patches-own [
-  flood  ; tsunami flood
+  flood  ; tsunami flood  // or depth?
 ]
 
 breed [ nodes node ]
-breed [ shelters shelter]
 breed [ pedestrians pedestrian ]
+directed-link-breed [ roads road ]
 
 nodes-own[
   id
   shelter_id
-  next_id
+  next_node
   shelter?
-]
-
-shelters-own[
-  id
   evac_type
 ]
 
+roads-own [
+  length_road
+  width
+  slope
+]
 
 pedestrians-own[
   id
@@ -39,12 +40,11 @@ pedestrians-own[
 
   current_node       ; current node of their evacuation route
   next_node          ; next node of their evacuation route
-  evacuation_route   ; DEPRECATED???
   goal_shelter       ; goal shelter of their evacuation route
 
   started?           ; True if the pedestrian has started to evacuate
   moving?            ; True if the pedestrian is evacuating (and their is not dead)
-  in_node?           ; True if the pedestrian is on a node
+  in_node?           ; True if the pedestrian is on a node (in order to get their next node)
   evacuated?         ; True if the pedestrian reach their goal shelter
   dead?              ; True if the pedestrian is on a patch with flood > FOOLD_THRESHOLD
 ]
@@ -73,13 +73,24 @@ globals [
 
   min_lon        ; minimum longitude that is associated with min_xcor
   min_lat        ; minimum latitude that is associated with min_ycor
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;;;;;;;;;;     DENSITY     ;;;;;;;;;;
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  km ; TODO: Change name!! max density
+  d  ; TODO: Change name!! radius for density factor
 ]
 
 
-to-report who-number [node_id]
+to-report get-node-who-number [node_id]
   ; return who number based on node id
   let who_number [who] of nodes with [id = node_id]
-  report item 0 who_number
+  ifelse length who_number = 1 [
+    report node item 0 who_number
+  ][
+    report nobody
+  ]
+
 end
 
 
@@ -134,11 +145,11 @@ to load-nodes
     set color white
     set shape "circle"
     set shelter? false
-    set evac_type "None"
+    set evac_type -9999
   ]
   ask nodes [
-    set next_node map who-number next_node
-  ]  ; strings have a maximum length
+    set next_node get-node-who-number next_node
+  ]
   print "Nodes Loaded"
 end
 
@@ -152,15 +163,35 @@ to load-shelters
       i ->
       if [id] of self = [id] of shelter i [
         set color green
-        set shape "target"
-        set size 1
+        set shape "star"
+        set size 3
         set shelter? true
         set evac_type [evac_type] of shelter i
       ]
     ]
-
   ]
   ask shelters [ die ]
+  print "Shelters Loaded"
+end
+
+
+to load-roads
+  ask roads [die]
+  foreach gis:feature-list-of urban_network_dataset [ i ->
+    let from_node node who-number gis:property-value i "from_id"
+    let to_node node who-number gis:property-value i "to_id"
+
+    ; Se cargan edges para ambas direcciones por que los peatones pueden moverse en ambas independiente del sentido del trafico de la calle
+    ; si se quiere incorporar vehiculos esto debe modificarse
+    ask from_node [
+      create-road-to to_node [
+        set length_road (gis:property-value i "length") / patch_to_meter
+        set width (gis:property-value i "width") / patch_to_meter
+        set slope gis:property-value i "slope" 
+        set shape "line"
+      ]
+    ]
+
 end
 
 
@@ -176,98 +207,61 @@ to load-pedestrians
     set in_node? false
     set evacuated? false
     set dead? false
-    set slope_factor 1
-    set density_factor 1
+    set slope_factor 1 ; TODO
+    set density_factor 1  ; TODO
+    ; TODO: CHECK!
+    set depar_time depar_time / tick_to_sec  ; Cast seconds to ticks
+    set base_speed base_speed * tick_to_sec / patch_to_meter  ; Cast m/s to patch/tick
   ]
   ; ###########
   ; Delete this, only for debugging
-  ask n-of (count pedestrians / 100 * 95) pedestrians [ die ]
+  ask n-of (count pedestrians / 100 * 99) pedestrians [ die ]
   ; ###########
+  print "Pedestrians Loaded"
 end
 
 
 to initial-move
   ; validate if pedestrian must start to evacuate according their departure time
-  ask pedestrians with [not started? and depar_time >= ticks] ; / ticks_to_second]
+  ask pedestrians with [not started? and depar_time >= ticks]
     [
-      let node_goal_shelter [shelter_id] of next_node
-      set goal_shelter node_goal_shelter
-      set current_node "None"
+      set current_node nobody
       set next_node min-one-of nodes [distance myself]
-      ;set evacuation_route [route] of next_node ; revisar sintaxis
-      ;set evacuation_route insert-item 0 evacuation_route [who] of next_node
+      set goal_shelter [shelter_id] of next_node  ; This is a number, not a turtle
       set started? true
       set moving? true
-      set in_node? true
+      set in_node? true ; It is a kind of dummy node in order to start evacuation
   ]
 end
 
 
-to update-moving
-  ;TODO: new procedure "update moving"..first section
+to update-route
   ask pedestrians with [
-    started?
+    moving?
     and in_node?
-    and not evacuated?
-    and not dead?
   ][
-    set next_node [next_node] of node next_node
+    let pedestrian_next_node next_node
+    set next_node [next_node] of pedestrian_next_node
     set heading towards next_node
+    set in_node? false
+    update-slope-factor
   ]
-end
-
-
-to update-speed
-  ; update pedestrian speed according pedestrians density and route slope
-  ask pedestrians with [moving?][
-    ;;;;;;; SLOPE ;;;;;;
-    if in_node? = true [
-      ifelse current_node = "None" [
-        set in_node? false][
-        let n2 next_node
-        let n1 current_node
-        let slope precision (([elevation] of n2 - [elevation] of n1) / (([distance n2] of n1) * patch_to_meter)) 3
-        set slope_factor precision (exp(-3.5 * abs(slope + 0.05) + 0.175)) 3
-        set in_node? false
-      ]
-    ]
-
-    ;;;;;; DENSITY ;;;;;
-    ; TODO: CHANGE NAMES
-    let km 5.4;
-    let b 6  ; ancho de calle
-    let d 3
-    let Nv (count (turtle-set other pedestrians in-radius (d / patch_to_meter)) + 1)   ; para contar al mismo agente en la densidad
-    let k (Nv / (d * b))
-    ifelse k < km
-      [
-        set density_factor precision (1 - EXP(-1.913 * (1 / k - 1 / km))) 3
-      ]
-      [
-        set density_factor 0.01
-      ]
-
-    ;;;;;; SPEED ;;;;;;
-    set actual_speed base_speed * slope_factor * density_factor
-  ]
-
-
 end
 
 
 to move-pedestrians
   ask pedestrians with [moving? and not in_node?][
-    ; TODO: add refresh-speed
 
-    ifelse actual_speed > distance next_node
-      [
-        fd distance next_node
-      ][
-        fd actual_speed
-      ]    ; notar que la velocidad en el modelo de mostafizi se mide en parcelas/tick
+    update-density-factor
+    ; TODO: actual_speed --> speed
+    set actual_speed base_speed * slope_factor * density_factor
+
+    ifelse actual_speed > distance next_node [fd distance next_node][fd actual_speed]    ; notar que la velocidad en el modelo de mostafizi se mide en parcelas/tick
+
     if (distance next_node < 0.005 ) [  ; TODO: add epsilon in meters * meters_to_...
       set in_node? true
       set current_node next_node
+      ; TODO: new procedure update-evacuated
       if [shelter?] of current_node = true [
         set evacuated? true
         set moving? false
@@ -279,38 +273,34 @@ to move-pedestrians
 end
 
 
+to-report get-road node1 node2
+    let node1 [who] of current_node
+    let node2 [who] of next_node
+    report road node1 node2
+end
 
 
-to correr-tsunami
-  let dir-temp (word pathdir:get-model-path "//data//tsunami_inundation")
-  set-current-directory dir-temp
-  if ticks mod 10 = 0 [ ; mod se utiliza para controlar que los ticks al correr el tsunami sean múltiplos de 10
-    ; TODO: FIX NAME COUNT
-    if cont-tsu = 0 [set nombre-archivo-tsunami ("z_04_000000.asc")]
-    if cont-tsu > 0 and cont-tsu < 100 [set nombre-archivo-tsunami (word "z_04_0000" cont-tsu ".asc")]
-    if cont-tsu >= 100 and cont-tsu < 1000 [set nombre-archivo-tsunami (word "z_04_000" cont-tsu ".asc")]
-    if cont-tsu >= 1000 [set nombre-archivo-tsunami (word "z_04_00" cont-tsu ".asc")]
-
-    let inundation gis:load-dataset nombre-archivo-tsunami
-    gis:set-world-envelope (gis:envelope-of inundation)
-    gis:apply-raster inundation flood
-    ask patches with [flood = 0][set flood -9999]
-
-    ; TODO: GET GLOBAL MIN MAX INUNDATION BEFORE AND USE A GOOD SCALE
-    let min-inundation gis:minimum-of inundation
-    let max-inundation gis:maximum-of inundation
-
-    ask patches [
-      if (flood >= min-inundation) and (flood <= max-inundation) [
-        set pcolor scale-color blue flood min-inundation max-inundation
-      ]
-    ]
-    display
-    ;no-display
-    ; TODO: ONLY USE TICKS INSTEAD CONT-TSU
-    set cont-tsu cont-tsu + 10
+to update-slope-factor
+  ; TODO: research if is posible to delete if statement
+  if current_node != nobody [
+    let slope_road [slope] of get-road current_node next_node
+    set slope_factor precision (exp(-3.5 * abs(slope_road + 0.05) + 0.175)) 3
   ]
-  set-current-directory pathdir:get-model-path
+end
+
+
+to update-density-factor
+  ;TODO: set b from an attribute of the edges
+  let b 6  ; ancho de calle
+  ; let b [width] of get-road current_node next_node
+  ; TODO: update units of ticks and depar_time
+  let Nv (count ((pedestrians with [depar_time >= ticks]) in-radius (d)))   ; para contar al mismo agente en la densidad
+  let k (Nv / (d * b))
+  ifelse k = 0 [set density_factor 1][
+    ifelse k < km
+      [set density_factor precision (1 - EXP(-1.913 * (1 / k - 1 / km))) 3]
+      [set density_factor 0.01]
+  ]
 end
 
 
@@ -320,6 +310,8 @@ to setup
   ;random-seed 100
   ;py:setup py:python
   set config table:from-json-file "data/config.json"
+  set km 5.4  ; Make report with config (initial_values)
+  set d (3 / patch_to_meter)  ; Make a report with config
   ;gis:set-drawing-color white
   read-gis-files
   load-nodes
@@ -327,11 +319,12 @@ to setup
   load-pedestrians
 end
 
+
 to go
   if ticks = 0 [reset-timer no-display] ; Se resetea el cronómetro
   initial-move
-  update-moving
-  update-speed
+  update-route
+  ;update-speed
   move-pedestrians
 
   tick
