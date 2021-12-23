@@ -34,7 +34,7 @@ pedestrians-own[
   depar_time
 
   base_speed         ; average speed according to pedestrian age
-  current_speed      ; current speed
+  speed      ; current speed
   slope_factor       ; TODO
   density_factor     ; TODO
 
@@ -82,7 +82,7 @@ globals [
 ]
 
 
-to-report get-node-who-number [node_id]
+to-report get-node [node_id]
   ; return who number based on node id
   let who_number [who] of nodes with [id = node_id]
   ifelse length who_number = 1 [
@@ -91,6 +91,13 @@ to-report get-node-who-number [node_id]
     report nobody
   ]
 
+end
+
+
+to-report get-road [node1_id node2_id]
+    let node1 [who] of node1_id
+    let node2 [who] of node2_id
+    report road node1 node2
 end
 
 
@@ -115,8 +122,8 @@ to read-gis-files
   let world_width item 1 world_envelope - item 0 world_envelope                                           ; real world width in meters
   let world_height item 3 world_envelope - item 2 world_envelope                                          ; real world height in meters
   let world_ratio world_height / world_width                                                              ; real world height to width ratio
-  let netlogo_width (max-pxcor - 1) - ((min-pxcor + 1))                                                   ; netlogo width in patches (minus 1 patch padding from each side)
-  let netlogo_height (max-pycor - 1) - ((min-pycor + 1))                                                  ; netlogo height in patches (minus 1 patch padding from each side)
+  let netlogo_width (max-pxcor - 1) -  (min-pxcor + 1)                                                    ; netlogo width in patches (minus 1 patch padding from each side)
+  let netlogo_height (max-pycor - 1) -  (min-pycor + 1)                                                   ; netlogo height in patches (minus 1 patch padding from each side)
   let netlogo_ratio netlogo_height / netlogo_width                                                        ; netlogo height to width ratio
   ; calculating the conversion ratios
   set patch_to_meter max (list (world_width / netlogo_width) (world_height / netlogo_height))             ; patch_to_meter conversion multiplier
@@ -148,7 +155,7 @@ to load-nodes
     set evac_type -9999
   ]
   ask nodes [
-    set next_node get-node-who-number next_node
+    set next_node get-node next_node
   ]
   print "Nodes Loaded"
 end
@@ -156,21 +163,19 @@ end
 
 to load-shelters
   ; load temporarily shelter dataset in order to give their attributes to shelter nodes
-  ask shelters [ die ]
-  gis:create-turtles-from-points shelter_dataset shelters
   ask nodes [
-    foreach [who] of shelters [
-      i ->
-      if [id] of self = [id] of shelter i [
+    foreach gis:feature-list-of shelter_dataset [ i ->
+      let i_shelter_id gis:property-value i "id"
+      let i_shelter_evac_type gis:property-value i "evac_type"
+      if [id] of self = i_shelter_id [
         set color green
         set shape "star"
         set size 3
         set shelter? true
-        set evac_type [evac_type] of shelter i
+        set evac_type i_shelter_evac_type
       ]
     ]
   ]
-  ask shelters [ die ]
   print "Shelters Loaded"
 end
 
@@ -178,19 +183,19 @@ end
 to load-roads
   ask roads [die]
   foreach gis:feature-list-of urban_network_dataset [ i ->
-    let from_node node who-number gis:property-value i "from_id"
-    let to_node node who-number gis:property-value i "to_id"
-
+    let from_node get-node gis:property-value i "from_id"
+    let to_node get-node gis:property-value i "to_id"
     ; Se cargan edges para ambas direcciones por que los peatones pueden moverse en ambas independiente del sentido del trafico de la calle
     ; si se quiere incorporar vehiculos esto debe modificarse
     ask from_node [
       create-road-to to_node [
         set length_road (gis:property-value i "length") / patch_to_meter
-        set width (gis:property-value i "width") / patch_to_meter
-        set slope gis:property-value i "slope" 
-        set shape "line"
+        ;set width (gis:property-value i "width") / patch_to_meter
+        set slope gis:property-value i "slope"
+        ;set shape "line"
       ]
     ]
+  ]
 
 end
 
@@ -198,7 +203,7 @@ end
 to load-pedestrians
   ; load pedestrian distribution
   ask pedestrians [ die ]
-  gis:create-turtles-from-points agent_distribution_dataset pedestrians [
+  gis:create-turtles-from-points-manual agent_distribution_dataset pedestrians [["speed" "base_speed"]] [
     set size 0.6
     set color yellow
     set shape "face neutral"
@@ -236,6 +241,7 @@ end
 
 
 to update-route
+  print (word "update route " ticks)
   ask pedestrians with [
     moving?
     and in_node?
@@ -244,7 +250,7 @@ to update-route
     set next_node [next_node] of pedestrian_next_node
     set heading towards next_node
     set in_node? false
-    update-slope-factor
+    ;update-slope-factor
   ]
 end
 
@@ -252,11 +258,11 @@ end
 to move-pedestrians
   ask pedestrians with [moving? and not in_node?][
 
-    update-density-factor
+    ;update-density-factor
     ; TODO: actual_speed --> speed
-    set actual_speed base_speed * slope_factor * density_factor
+    set speed base_speed * slope_factor * density_factor
 
-    ifelse actual_speed > distance next_node [fd distance next_node][fd actual_speed]    ; notar que la velocidad en el modelo de mostafizi se mide en parcelas/tick
+    ifelse speed > distance next_node [fd distance next_node][fd speed]    ; notar que la velocidad en el modelo de mostafizi se mide en parcelas/tick
 
     if (distance next_node < 0.005 ) [  ; TODO: add epsilon in meters * meters_to_...
       set in_node? true
@@ -272,12 +278,6 @@ to move-pedestrians
   ]
 end
 
-
-to-report get-road node1 node2
-    let node1 [who] of current_node
-    let node2 [who] of next_node
-    report road node1 node2
-end
 
 
 to update-slope-factor
@@ -307,16 +307,14 @@ end
 to setup
   clear-all
   reset-ticks
-  ;random-seed 100
-  ;py:setup py:python
   set config table:from-json-file "data/config.json"
-  set km 5.4  ; Make report with config (initial_values)
-  set d (3 / patch_to_meter)  ; Make a report with config
-  ;gis:set-drawing-color white
   read-gis-files
   load-nodes
   load-shelters
+  load-roads
   load-pedestrians
+  set km 5.4  ; Make report with config (initial_values)
+  set d (3 / patch_to_meter)  ; Make a report with config
 end
 
 
