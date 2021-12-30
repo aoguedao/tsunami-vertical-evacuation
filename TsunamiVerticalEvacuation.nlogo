@@ -140,7 +140,6 @@ to read-gis-files
   set patch_to_meter max (list (world_width / netlogo_width) (world_height / netlogo_height))             ; patch_to_meter conversion multiplier
   set patch_to_feet patch_to_meter * 3.281     ; 1 m = 3.281 ft                                           ; patch_to_feet conversion multiplier
   set tick_to_sec 1.0                                                                                     ; tick_to_sec ratio is set to 1.0 (preferred)
-  set sec_per_tick 10
   set fd_to_ftps patch_to_feet / tick_to_sec                                                              ; patch/tick to ft/s speed conversion multipler
   set fd_to_mph  fd_to_ftps * 0.682            ; 1ft/s = 0.682 mph                                        ; patch/tick to mph speed conversion multiplier
   ; to calculate the minimum longitude and latitude of the world associated with min_xcor and min_ycor
@@ -153,6 +152,9 @@ to read-gis-files
     set min_lon item 0 world_envelope - ((world_ratio - netlogo_ratio) / world_ratio / 2) * netlogo_width * patch_to_meter - patch_to_meter
     set min_lat item 2 world_envelope - patch_to_meter
   ]
+  ; agent epsilon node distance
+  let epsilon_meters_node table:get-or-default config "epsilon_meters_node" 0.005
+  set epsilon_node epsilon_meters_node / patch_to_meter
 end
 
 
@@ -374,14 +376,13 @@ end
 
 
 to initial-values
-  ;ask patches [set flood 0]
   set config table:from-json-file "data/config.json"
-  set max_seconds 3600
-  set epsilon_node 0.005
+  set sec_per_tick table:get-or-default config "seconds_per_tick" 10
+  set max_seconds table:get-or-default config "max_seconds" 3600
   ; tsunami inundation scale
-  set flood_threshold 0.3
-  set min_inundation_flood 0
-  set max_inundation_flood 9
+  set flood_threshold table:get-or-default config "flood_threshold" 0.3
+  set min_inundation_flood table:get-or-default config "min_inundation_flood" 0
+  set max_inundation_flood table:get-or-default config "max_inundation_flood" 9
 end
 
 

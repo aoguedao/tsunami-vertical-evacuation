@@ -1,0 +1,9 @@
+{
+    "seconds_per_tick": 10,
+    "max_seconds": 3600,
+    "epsilon_meters_node": 0.05,
+    "flood_threshold": 0.3,
+    "min_inundation_flood": 0,
+    "max_inundation_flood": 9, 
+    "null": -9999
+}
