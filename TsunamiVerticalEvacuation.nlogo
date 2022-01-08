@@ -34,8 +34,8 @@ roads-own [
 
 pedestrians-own[
   id                 ; Pedestrian id
-  initial_lat        ; Initial latitude
-  initial_lon        ; Initial longitude
+  init_x             ; Initial position
+  init_y             ; Initial position
   age                ; Age
   depar_time         ; Departure time
   base_speed         ; Average speed according to pedestrian age
@@ -178,7 +178,7 @@ to load-shelters
       let i_shelter_evac_type gis:property-value i "evac_type"
       if [id] of self = i_shelter_id [
         set color green
-        set shape "star"
+        set shape "square"
         set size 5
         set shelter? true
         set evac_type i_shelter_evac_type
@@ -201,8 +201,7 @@ to load-roads
     ask from_node [
       create-road-to to_node [
         set road_length ((gis:property-value i "length") / meters_per_patch)
-        ;set road_width ((gis:property-value i "width") / meters_per_patch)
-        set road_width (6 / meters_per_patch)
+        set road_width ((gis:property-value i "width") / meters_per_patch)
         set slope gis:property-value i "slope"
         ;set shape "line"
       ]
@@ -215,16 +214,15 @@ end
 to update-tsunami-inundation
   ; load tsunamis raster
   let seconds int(ticks * sec_per_tick)
-  ; print (word "Seconds " seconds)
-  if seconds mod 10 = 0 [  ; TODO
+  if seconds mod sec_per_tick = 0 [
     let tsunami_filename (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator seconds ".asc")
     let tsunami_dataset gis:load-dataset tsunami_filename
     ; gis:set-world-envelope (gis:envelope-of inundation)  ; check this!
     gis:apply-raster tsunami_dataset flow_depth
-    ask patches with [flow_depth = -9999][set flow_depth 0]  ; TODO: change -9999
+    ; ask patches with [flow_depth = -9999][set flow_depth 0]  ; TODO: change -9999
     ask patches with [not ((flow_depth <= 0) or (flow_depth >= 0))][set flow_depth 0]
     ask patches [
-      set pcolor scale-color blue flow_depth min_flow_depth min_flow_depth
+      set pcolor scale-color blue flow_depth min_flow_depth max_flow_depth
     ]
     ;display
   ]
@@ -235,20 +233,20 @@ to load-pedestrians
   ; load pedestrian distribution
   ask pedestrians [ die ]
   gis:create-turtles-from-points-manual agent_distribution_dataset pedestrians [["speed" "base_speed"]] [
-    set size 1
+    set size 1.5
     set color yellow
-    set shape "face neutral"
+    set shape "circle"
     set started? false
     set moving? false
     set in_node? false
     set evacuated? false
     set dead? false
-    set end_time 0
     set slope_factor 1 ; TODO
     set density_factor 1  ; TODO
-    ; TODO: CHECK!
     set depar_time (depar_time / sec_per_tick)                     ; cast seconds to ticks
     set base_speed (base_speed * sec_per_tick / meters_per_patch)  ; cast meter/second to patch/tick
+    set total_distance 0
+    set end_time 0
   ]
   output-print "Pedestrians Loaded"
 end
@@ -256,7 +254,7 @@ end
 
 to start-to-evacuate
   ; Validate if pedestrian must start to evacuate according their departure time
-  ask pedestrians with [not started? and depar_time >= ticks]
+  ask pedestrians with [not started? and depar_time <= ticks]
     [
       set current_node nobody
       set next_node min-one-of nodes [distance myself]
@@ -292,15 +290,16 @@ to move-pedestrians
     ; Current speed updated by slope and density factors
     set speed (base_speed * slope_factor * density_factor)
     ; If next node is to close then the pedestrian reach the next node
-    ifelse speed > distance next_node [
-        fd distance next_node
-      ][
-        fd speed
-    ]
+    let distance_to_move min (list speed (distance next_node))
+    fd distance_to_move
+    set total_distance (total_distance + distance_to_move)
     ; Check if pedestrian has reached next node
-    if (distance next_node < reach_node_tolerance ) [
+    let distance_to_next_node distance next_node
+    if (distance_to_next_node < reach_node_tolerance ) [
+      fd distance_to_next_node
       set in_node? true
       set current_node next_node
+      set total_distance (total_distance + distance_to_next_node)
       ; Check if next node is a shelter
       if [shelter?] of current_node = true [ mark-evacuated ]
     ]
@@ -324,13 +323,12 @@ to update-density-factor
   ; TODO: update units of ticks and depar_time
   let n_pedestrians_within_radius (count ((pedestrians with [moving?]) in-radius (pedestrian_counting_radius)))
   let pedestrian_density (n_pedestrians_within_radius / (2 * pedestrian_counting_radius * current_route_width))
-  ifelse pedestrian_density = 0 [
-      set density_factor 1
-    ][
-      ifelse pedestrian_density < jammed_pedestrian_density
+  ifelse pedestrian_density = 0
+    [ set density_factor 1 ]
+    [ ifelse pedestrian_density < jammed_pedestrian_density
         [set density_factor precision (1 - EXP(-1.913 * (1 / pedestrian_density - 1 / jammed_pedestrian_density))) 3]
         [set density_factor min_density_factor]
-  ]
+    ]
 end
 
 to mark-evacuated
@@ -338,7 +336,6 @@ to mark-evacuated
   set evacuated? true
   set moving? false
   set end_time ticks
-  set shape "face happy"
   set color green
   ask current_node [set evacuee_count (evacuee_count + 1)]
 end
@@ -349,11 +346,11 @@ to update-dead-pedestrians
   ask pedestrians with [not dead? and not evacuated?][
     let flow_depth_here [flow_depth] of patch-here
     if flow_depth_here >= flow_depth_threshold
-      [ set moving? false
+      [
+        set moving? false
         set dead? true
         set end_time ticks
         set color red
-        set shape "face sad"
       ]
     ]
 end
@@ -387,10 +384,48 @@ to write-output
   let shelter_osm_id (list map [ x -> [id] of x ] sort shelters_agenset)
   let shelter_evacuation_list sentence shelter_osm_id matrix:to-column-list shelter_evacuation_matrix
   csv:to-file shelter_evacuation_output shelter_evacuation_list
+  ; Pedestrian-tick output
+  let pedestrian_tick_output (word absolute_output_path pathdir:get-separator "pedestrian_ticks.csv")
+  if file-exists? pedestrian_tick_output [ file-delete pedestrian_tick_output ]
+  csv:to-file pedestrian_tick_output pedestrian_status_list
   ; Pedestrian output
   let pedestrian_output (word absolute_output_path pathdir:get-separator "pedestrians.csv")
   if file-exists? pedestrian_output [ file-delete pedestrian_output ]
-  csv:to-file pedestrian_output pedestrian_status_list
+  let pedestrian_output_list ( sentence
+    [
+      [
+        "id"
+        "init_x"
+        "init_y"
+        "age"
+        "depar_time"
+        "base_speed"
+        "final_node"
+        "total_distance"
+        "end_time"
+        "moving"
+        "evacuated"
+        "dead"
+      ]
+    ]
+    [
+      (list
+        id
+        init_x
+        init_y
+        age
+        depar_time
+        base_speed
+        [id] of current_node
+        total_distance
+        end_time
+        moving?
+        evacuated?
+        dead?
+      )
+    ] of pedestrians
+  )
+  csv:to-file pedestrian_output pedestrian_output_list
 end
 
 
@@ -420,8 +455,8 @@ to go
   display  ; remove when running without GUI
   if ticks > max_seconds / sec_per_tick ; stopper
     [
-      output-print (word "Total time: " timer " seconds.")
       write-output
+      output-print (word "Total time: " timer " seconds.")
       stop
     ]
 end
