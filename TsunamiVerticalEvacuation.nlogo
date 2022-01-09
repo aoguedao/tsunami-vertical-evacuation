@@ -272,8 +272,10 @@ to update-route
     moving?
     and in_node?
   ][
-    let pedestrian_next_node next_node
-    set next_node [next_node] of pedestrian_next_node
+    let rnd_confusion_ratio random-float 1
+    ifelse ( rnd_confusion_ratio >= confusion_ratio or current_node = nobody)
+      [ set next_node [next_node] of next_node ]
+      [ set next_node one-of [out-road-neighbors] of current_node ]  ; pedestrian picks any road
     if next_node != nobody [
       set heading towards next_node
       set in_node? false
@@ -590,6 +592,17 @@ INPUTBOX
 333
 pedestrian_counting_radius_meters
 0.3
+1
+0
+Number
+
+INPUTBOX
+4
+345
+159
+405
+confusion_ratio
+0.05
 1
 0
 Number
