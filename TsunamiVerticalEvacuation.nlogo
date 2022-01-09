@@ -21,9 +21,9 @@ nodes-own[
   next_node            ; Next node according its route
   shelter?             ; True if it is a shelter
   evac_type            ; Evacuation shelter type if it is a shelter, else 0
-  evacuation_capacity  ;
+  capacity             ; Evacuee capacity
   evacuee_count        ; Evacuee pedestrian count if it is a shelter, else -9999
-  evacuee_count_list   ;
+  evacuee_count_list   ; Evacuee cont per tick
 ]
 
 roads-own [
@@ -72,7 +72,7 @@ globals [
   ;;;;;;;;; CONVERSION RATIOS ;;;;;;;;;
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   meters_per_patch  ; Meters per patch
-  sec_per_tick      ; Seconds per tick
+  seconds_per_tick      ; Seconds per tick
 
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;;;;;;;;;;     DENSITY     ;;;;;;;;;;
@@ -114,7 +114,7 @@ to initial-values
   ; Initial values based on configuration file
   set absolute_data_path (word pathdir:get-model-path pathdir:get-separator data_path)
   set config (table:from-json-file (word absolute_data_path pathdir:get-separator "config.json"))
-  set sec_per_tick (table:get-or-default config "seconds_per_tick" 10)
+  set seconds_per_tick (table:get-or-default config "seconds_per_tick" 10)
   set max_seconds (table:get-or-default config "max_seconds" 3600)
   ; Tsunami inundation scale
   set min_flow_depth (table:get config "min_flow_depth")
@@ -213,8 +213,8 @@ end
 
 to update-tsunami-inundation
   ; load tsunamis raster
-  let seconds int(ticks * sec_per_tick)
-  if seconds mod sec_per_tick = 0 [
+  let seconds int(ticks * seconds_per_tick)
+  if seconds mod seconds_per_tick = 0 [
     let tsunami_filename (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator seconds ".asc")
     let tsunami_dataset gis:load-dataset tsunami_filename
     ; gis:set-world-envelope (gis:envelope-of inundation)  ; check this!
@@ -243,8 +243,8 @@ to load-pedestrians
     set dead? false
     set slope_factor 1 ; TODO
     set density_factor 1  ; TODO
-    set depar_time (depar_time / sec_per_tick)                     ; cast seconds to ticks
-    set base_speed (base_speed * sec_per_tick / meters_per_patch)  ; cast meter/second to patch/tick
+    set depar_time (depar_time / seconds_per_tick)                     ; cast seconds to ticks
+    set base_speed (base_speed * seconds_per_tick / meters_per_patch)  ; cast meter/second to patch/tick
     set total_distance 0
     set end_time 0
   ]
@@ -277,7 +277,7 @@ to update-route
     if next_node != nobody [
       set heading towards next_node
       set in_node? false
-      ;update-slope-factor  ; TODO: TO UNCOMMENT
+      update-slope-factor
     ]
   ]
 end
@@ -286,7 +286,7 @@ end
 to move-pedestrians
   ; Move pedestrians updating their speed
   ask pedestrians with [moving? and not in_node?][
-    ; update-density-factor  ; TODO: TO UNCOMMENT
+    ; update-density-factor  ; CHECK!
     ; Current speed updated by slope and density factors
     set speed (base_speed * slope_factor * density_factor)
     ; If next node is to close then the pedestrian reach the next node
@@ -318,7 +318,9 @@ end
 
 to update-density-factor
   ; Update density factor according to pedestrians around them
-  let current_route_width [road_width] of get-road current_node next_node
+  let current_route_width ifelse-value (current_node != nobody and next_node != nobody)
+    [[road_width] of get-road current_node next_node]
+    [ 6 / meters_per_patch]  ; when pedestrian is not walking over a road
   ; Count pedestrians around them
   ; TODO: update units of ticks and depar_time
   let n_pedestrians_within_radius (count ((pedestrians with [moving?]) in-radius (pedestrian_counting_radius)))
@@ -371,12 +373,12 @@ end
 
 
 to write-output
-  set absolute_output_path (word absolute_data_path pathdir:get-separator "output")
+  set absolute_output_path ( word absolute_data_path pathdir:get-separator "output" )
+  if behaviorspace-experiment-name != "" [
+    set absolute_output_path ( word absolute_output_path pathdir:get-separator behaviorspace-experiment-name pathdir:get-separator behaviorspace-run-number )
+  ]
   if not pathdir:isDirectory? absolute_output_path [ pathdir:create absolute_output_path ]
-  ; Simulation Output
-  let simulation_output (word absolute_output_path pathdir:get-separator "scenario_output.txt")
-  if file-exists? simulation_output [ file-delete simulation_output ]
-  export-output simulation_output
+  output-print ( word "Output path: " absolute_output_path)
   ; Shelters output
   let shelter_evacuation_output (word absolute_output_path pathdir:get-separator "shelters_evacuation.csv")
   if file-exists? shelter_evacuation_output [ file-delete shelter_evacuation_output ]
@@ -384,10 +386,12 @@ to write-output
   let shelter_osm_id (list map [ x -> [id] of x ] sort shelters_agenset)
   let shelter_evacuation_list sentence shelter_osm_id matrix:to-column-list shelter_evacuation_matrix
   csv:to-file shelter_evacuation_output shelter_evacuation_list
+  output-print "Shelters output has been successfully written"
   ; Pedestrian-tick output
   let pedestrian_tick_output (word absolute_output_path pathdir:get-separator "pedestrian_ticks.csv")
   if file-exists? pedestrian_tick_output [ file-delete pedestrian_tick_output ]
   csv:to-file pedestrian_tick_output pedestrian_status_list
+  output-print "Pedestrian status per tick output has been successfully written"
   ; Pedestrian output
   let pedestrian_output (word absolute_output_path pathdir:get-separator "pedestrians.csv")
   if file-exists? pedestrian_output [ file-delete pedestrian_output ]
@@ -426,6 +430,11 @@ to write-output
     ] of pedestrians
   )
   csv:to-file pedestrian_output pedestrian_output_list
+  output-print "Pedestrian output has been successfully written"
+  ; Simulation Output
+  let simulation_output (word absolute_output_path pathdir:get-separator "scenario_output.txt")
+  if file-exists? simulation_output [ file-delete simulation_output ]
+  export-output simulation_output
 end
 
 
@@ -444,6 +453,12 @@ end
 
 
 to go
+  if ticks > max_seconds / seconds_per_tick ; stopper
+    [
+      write-output
+      output-print (word "Simulation total time: " timer " seconds.")
+      stop
+    ]
   update-tsunami-inundation
   update-dead-pedestrians
   start-to-evacuate
@@ -452,13 +467,6 @@ to go
   update-evacuee-count-list
   update-pedestrian-status-list
   tick
-  display  ; remove when running without GUI
-  if ticks > max_seconds / sec_per_tick ; stopper
-    [
-      write-output
-      output-print (word "Total time: " timer " seconds.")
-      stop
-    ]
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
@@ -938,7 +946,10 @@ NetLogo 6.2.1
     <go>go</go>
     <metric>count pedestrians with [dead?]</metric>
     <metric>count pedestrians with [evacuated?]</metric>
-    <enumeratedValueSet variable="flood_threshold">
+    <enumeratedValueSet variable="data_path">
+      <value value="&quot;scenario_test&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="flow_depth_threshold">
       <value value="0.1"/>
       <value value="0.2"/>
       <value value="0.3"/>
