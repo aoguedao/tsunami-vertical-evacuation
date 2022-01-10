@@ -18,6 +18,7 @@ patches-own [
 nodes-own[
   id                   ; Open Street Map node id
   shelter_id           ; Goal shelter OSM id
+  horizontal_route
   next_node            ; Next node according its route
   shelter?             ; True if it is a shelter
   evac_type            ; Evacuation shelter type if it is a shelter, else 0
@@ -33,25 +34,27 @@ roads-own [
 ]
 
 pedestrians-own[
-  id                 ; Pedestrian id
-  init_x             ; Initial position
-  init_y             ; Initial position
-  age                ; Age
-  depar_time         ; Departure time
-  base_speed         ; Average speed according to pedestrian age
-  speed              ; Current speed
-  slope_factor       ; TODO
-  density_factor     ; TODO
-  current_node       ; Current node of their evacuation route
-  next_node          ; Next node of their evacuation route
-  goal_shelter_id    ; Goal shelter OSM id of their evacuation route
-  started?           ; True if the pedestrian has started to evacuate
-  moving?            ; True if the pedestrian is evacuating (and their is not dead)
-  in_node?           ; True if the pedestrian is on a node (in order to get their next node)
-  evacuated?         ; True if the pedestrian reach their goal shelter
-  dead?              ; True if the pedestrian is on a patch with flow_depth >= flow_depth_threshold
-  total_distance     ; Total distance walked
-  end_time           ; Ticks when pedestrian has reached a shelter or has died
+  id                  ; Pedestrian id
+  init_x              ; Initial position
+  init_y              ; Initial position
+  age                 ; Age
+  depar_time          ; Departure time
+  base_speed          ; Average speed according to pedestrian age
+  speed               ; Current speed
+  slope_factor        ; TODO
+  density_factor      ; TODO
+  decision            ; "hor": Horizontal, "ver": Vertical or "no": Not willing to evacuate
+  route               ; List of "who" from nodes remaining to reach the shelter
+  goal_shelter_id     ; Goal shelter OSM id of their evacuation route
+  current_node        ; Current node of their evacuation route
+  next_node           ; Next node of their evacuation route
+  started?            ; True if the pedestrian has started to evacuate
+  moving?             ; True if the pedestrian is evacuating (and their is not dead)
+  in_node?            ; True if the pedestrian is on a node (in order to get their next node)
+  evacuated?          ; True if the pedestrian reach their goal shelter
+  dead?               ; True if the pedestrian is on a patch with flow_depth >= flow_depth_threshold
+  total_distance      ; Total distance walked
+  end_time            ; Ticks when pedestrian has reached a shelter or has died
 ]
 
 
@@ -86,6 +89,7 @@ globals [
   reach_node_tolerance        ; Float point tolerance for arriving at nodes
   shelters_agenset            ;
   pedestrian_status_list      ; For making output
+  shortest_horizontal_routes
   aux
 ]
 
@@ -163,7 +167,9 @@ to load-nodes
     set shelter? false
     set evac_type 0
   ]
+  set shortest_horizontal_routes table:from-json-file (word absolute_data_path pathdir:get-separator "urban_network" pathdir:get-separator "shortest_horizontal_evacuation_route.json")
   ask nodes [
+    set horizontal_route table:get shortest_horizontal_routes (word id)
     set next_node get-node next_node  ; TODO: select shortest of safest route
   ]
   output-print "Nodes Loaded"
@@ -234,8 +240,8 @@ to load-pedestrians
   ask pedestrians [ die ]
   gis:create-turtles-from-points-manual agent_distribution_dataset pedestrians [["speed" "base_speed"]] [
     set size 1.5
-    set color yellow
     set shape "circle"
+    set current_node nobody
     set started? false
     set moving? false
     set in_node? false
@@ -248,7 +254,34 @@ to load-pedestrians
     set total_distance 0
     set end_time 0
   ]
+  make-evacuation-decision
   output-print "Pedestrians Loaded"
+end
+
+
+to make-evacuation-decision
+  ask pedestrians [
+    let rnd_evacuation_willingness random-float 1
+    ifelse ( rnd_evacuation_willingness <= evacuation_willingness_prob )
+    [
+      let rnd_vert_evacuation_willingness random-float 1
+      ifelse ( rnd_vert_evacuation_willingness <= vert_evacuation_willingness_prob )
+      [
+        set decision "vert"
+        set color orange
+      ]
+      [
+        set decision "hor"
+        set color yellow
+      ]
+    ]
+    [
+      set decision "no"
+      set color magenta
+      set depar_time ( max_seconds / seconds_per_tick + 1 )
+    ]
+  ]
+
 end
 
 
@@ -256,7 +289,6 @@ to start-to-evacuate
   ; Validate if pedestrian must start to evacuate according their departure time
   ask pedestrians with [not started? and depar_time <= ticks]
     [
-      set current_node nobody
       set next_node min-one-of nodes [distance myself]
       set goal_shelter_id [shelter_id] of next_node            ; this is a number, not a turtle
       set started? true
@@ -355,6 +387,7 @@ to update-dead-pedestrians
         set dead? true
         set end_time ticks
         set color red
+        set shape "x"
       ]
     ]
 end
@@ -401,6 +434,7 @@ to write-output
     [
       [
         "id"
+        "decision"
         "init_x"
         "init_y"
         "age"
@@ -417,12 +451,13 @@ to write-output
     [
       (list
         id
+        decision
         init_x
         init_y
         age
         depar_time
         base_speed
-        [id] of current_node
+        ifelse-value (current_node != nobody) [[id] of current_node] [""]
         total_distance
         end_time
         moving?
@@ -603,6 +638,28 @@ INPUTBOX
 405
 confusion_ratio
 0.05
+1
+0
+Number
+
+INPUTBOX
+4
+417
+159
+477
+evacuation_willingness_prob
+0.9
+1
+0
+Number
+
+INPUTBOX
+4
+496
+159
+556
+vert_evacuation_willingness_prob
+0.2
 1
 0
 Number
