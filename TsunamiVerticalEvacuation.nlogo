@@ -17,9 +17,8 @@ patches-own [
 
 nodes-own[
   id                   ; Open Street Map node id
-  shelter_id           ; Goal shelter OSM id
   horizontal_route
-  next_node            ; Next node according its route
+  vertical_route
   shelter?             ; True if it is a shelter
   evac_type            ; Evacuation shelter type if it is a shelter, else 0
   capacity             ; Evacuee capacity
@@ -43,7 +42,7 @@ pedestrians-own[
   speed               ; Current speed
   slope_factor        ; TODO
   density_factor      ; TODO
-  decision            ; "hor": Horizontal, "ver": Vertical or "no": Not willing to evacuate
+  decision            ; "horizontal": Horizontal, "ver": Vertical or "no": Not willing to evacuate
   route               ; List of "who" from nodes remaining to reach the shelter
   goal_shelter_id     ; Goal shelter OSM id of their evacuation route
   current_node        ; Current node of their evacuation route
@@ -74,7 +73,7 @@ globals [
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;;;;;;;;; CONVERSION RATIOS ;;;;;;;;;
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-  meters_per_patch  ; Meters per patch
+  meters_per_patch      ; Meters per patch
   seconds_per_tick      ; Seconds per tick
 
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -87,9 +86,8 @@ globals [
   ;; OTHERS ;;
   ;;;;;;;;;;;;
   reach_node_tolerance        ; Float point tolerance for arriving at nodes
-  shelters_agenset            ;
+  shelters_agenset            ; Agenset of shelters
   pedestrian_status_list      ; For making output
-  shortest_horizontal_routes
   aux
 ]
 
@@ -102,7 +100,11 @@ to-report get-node [node_id]
   ][
     report nobody
   ]
+end
 
+
+to-report get-who-node [node_id]
+  report [who] of get-node node_id
 end
 
 
@@ -167,10 +169,25 @@ to load-nodes
     set shelter? false
     set evac_type 0
   ]
-  set shortest_horizontal_routes table:from-json-file (word absolute_data_path pathdir:get-separator "urban_network" pathdir:get-separator "shortest_horizontal_evacuation_route.json")
+  let horizontal_routes table:from-json-file ( word
+    absolute_data_path
+    pathdir:get-separator
+    "urban_network"
+    pathdir:get-separator
+    "horizontal_evacuation_routes.json"
+  )
+  let vertical_routes table:from-json-file ( word
+    absolute_data_path
+    pathdir:get-separator
+    "urban_network"
+    pathdir:get-separator
+    "vertical_evacuation_routes.json"
+  )
   ask nodes [
-    set horizontal_route table:get shortest_horizontal_routes (word id)
-    set next_node get-node next_node  ; TODO: select shortest of safest route
+    let horizontal_route_id table:get horizontal_routes (word id)
+    let vertical_route_id table:get vertical_routes (word id)
+    set horizontal_route map get-who-node horizontal_route_id
+    set vertical_route map get-who-node vertical_route_id
   ]
   output-print "Nodes Loaded"
 end
@@ -180,14 +197,14 @@ to load-shelters
   ; Load temporarily shelter dataset in order to give their attributes to shelter nodes
   ask nodes [
     foreach gis:feature-list-of shelter_dataset [ i ->
-      let i_shelter_id gis:property-value i "id"
-      let i_shelter_evac_type gis:property-value i "evac_type"
-      if [id] of self = i_shelter_id [
+      let i_shelter_id ( gis:property-value i "id" )
+      if id = i_shelter_id [
         set color green
         set shape "square"
         set size 5
         set shelter? true
-        set evac_type i_shelter_evac_type
+        set evac_type ( gis:property-value i "evac_type" )
+        set capacity 1000000  ; TODO
         set evacuee_count 0
         set evacuee_count_list []
       ]
@@ -230,7 +247,6 @@ to update-tsunami-inundation
     ask patches [
       set pcolor scale-color blue flow_depth min_flow_depth max_flow_depth
     ]
-    ;display
   ]
 end
 
@@ -267,18 +283,18 @@ to make-evacuation-decision
       let rnd_vert_evacuation_willingness random-float 1
       ifelse ( rnd_vert_evacuation_willingness <= vert_evacuation_willingness_prob )
       [
-        set decision "vert"
+        set decision "vertical"
         set color orange
       ]
       [
-        set decision "hor"
+        set decision "horizontal"
         set color yellow
       ]
     ]
     [
       set decision "no"
-      set color magenta
-      set depar_time ( max_seconds / seconds_per_tick + 1 )
+      set color brown
+      set depar_time ( max_seconds / seconds_per_tick + 1 )  ; Inifinite departure time
     ]
   ]
 
@@ -290,30 +306,49 @@ to start-to-evacuate
   ask pedestrians with [not started? and depar_time <= ticks]
     [
       set next_node min-one-of nodes [distance myself]
-      set goal_shelter_id [shelter_id] of next_node            ; this is a number, not a turtle
+      set route ( get-route next_node decision )
+      ;set goal_shelter_id ( ifelse-value (is-list? route) [ last route ][ 0 ] )
+      set goal_shelter_id (last route )
       set started? true
       set moving? true
-      set in_node? true                                     ; dummy node in order to start evacuation
+      set in_node? true  ; dummy node in order to start evacuation
   ]
 end
 
 
 to update-route
   ; Update next node, heading and slope factor of of each pedestrian
-  ask pedestrians with [
-    moving?
-    and in_node?
-  ][
-    let rnd_confusion_ratio random-float 1
-    ifelse ( rnd_confusion_ratio >= confusion_ratio or current_node = nobody)
-      [ set next_node [next_node] of next_node ]
-      [ set next_node one-of [out-road-neighbors] of current_node ]  ; pedestrian picks any road
+  ask pedestrians with [ moving? and in_node? ][
+    get-next-node
     if next_node != nobody [
       set heading towards next_node
       set in_node? false
       update-slope-factor
     ]
   ]
+end
+
+to get-next-node
+  let rnd_confusion_ratio random-float 1
+  ifelse ( rnd_confusion_ratio >= confusion_ratio or current_node = nobody)
+  [
+    set next_node ( node first route )
+    set route ( but-first route )
+  ]
+  [
+    set next_node one-of [out-road-neighbors] of current_node
+    set route ( get-route next_node decision )
+  ]  ; pedestrian picks any road
+end
+
+
+to-report get-route [from_node evacuation_decision ]
+  (
+    ifelse
+      evacuation_decision = "horizontal" [ report [horizontal_route] of from_node ]
+      evacuation_decision = "vertical"   [ report [vertical_route] of from_node ]
+                                         [ report [] ]
+   )
 end
 
 
@@ -335,7 +370,9 @@ to move-pedestrians
       set current_node next_node
       set total_distance (total_distance + distance_to_next_node)
       ; Check if next node is a shelter
-      if [shelter?] of current_node = true [ mark-evacuated ]
+      if ( [shelter?] of current_node ) [
+        ifelse ( [evacuee_count < capacity] of current_node ) [ mark-evacuated ][ update-backup-route ]
+      ]
     ]
   ]
 end
@@ -344,8 +381,8 @@ end
 to update-slope-factor
   ; Update slope factor according to road slope
   if current_node != nobody [
-    let slope_road [slope] of get-road current_node next_node
-    set slope_factor precision (exp(-3.5 * abs(slope_road + 0.05) + 0.175)) 3
+    let slope_road ( [slope] of get-road current_node next_node )
+    set slope_factor ( precision (exp(-3.5 * abs(slope_road + 0.05) + 0.175)) 3 )
   ]
 end
 
@@ -365,6 +402,10 @@ to update-density-factor
         [set density_factor precision (1 - EXP(-1.913 * (1 / pedestrian_density - 1 / jammed_pedestrian_density))) 3]
         [set density_factor min_density_factor]
     ]
+end
+
+to update-backup-route
+  print "Update backup route!"
 end
 
 to mark-evacuated
@@ -637,7 +678,7 @@ INPUTBOX
 159
 405
 confusion_ratio
-0.05
+0.1
 1
 0
 Number
