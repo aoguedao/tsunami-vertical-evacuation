@@ -17,8 +17,6 @@ patches-own [
 
 nodes-own[
   id                   ; Open Street Map node id
-  ;horizontal_route
-  ;vertical_route
   shelter?             ; True if it is a shelter
   evac_type            ; Evacuation shelter type if it is a shelter, else 0
   capacity             ; Evacuee capacity
@@ -89,7 +87,7 @@ globals [
   ;; OTHERS ;;
   ;;;;;;;;;;;;
   reach_node_tolerance        ; Float point tolerance for arriving at nodes
-  alternate_shelter_radius
+  alternate_shelter_radius    ; For looking another route
   shelters_agenset            ; Agenset of shelters
   nodes_id_table              ; Table where keys are OSM id from each node and value is the node itself
   pedestrian_status_list      ; For making output
@@ -253,20 +251,33 @@ to load-evacuation-routes
 end
 
 
+to load-tsunami-inundation
+  ( ifelse
+    tsunami_flow_depth = "continuous" [ output-print "Tsunami inundation raster will be loaded in each tick"]
+    tsunami_flow_depth = "conservative" [
+      let tsunami_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator  "conservative_inundation.asc")
+      apply-tsunami-raster tsunami_dataset min_flow_depth max_flow_depth
+    ]
+    [output-print "WARNING: Tsunami flow depth type is not recognized"]
+   )
+end
+
 to update-tsunami-inundation
   ; load tsunamis raster
-  let seconds int(ticks * seconds_per_tick)
-  if seconds mod seconds_per_tick = 0 [
-    let tsunami_filename (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator seconds ".asc")
-    let tsunami_dataset gis:load-dataset tsunami_filename
+  if tsunami_flow_depth = "continuous" [
+    let seconds int(ticks * seconds_per_tick)
+    let tsunami_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator seconds ".asc")
     ; gis:set-world-envelope (gis:envelope-of inundation)  ; check this!
-    gis:apply-raster tsunami_dataset flow_depth
-    ; ask patches with [flow_depth = -9999][set flow_depth 0]  ; TODO: change -9999
-    ask patches with [not ((flow_depth <= 0) or (flow_depth >= 0))][set flow_depth 0]
-    ask patches [
-      set pcolor scale-color blue flow_depth min_flow_depth max_flow_depth
+    apply-tsunami-raster tsunami_dataset min_flow_depth max_flow_depth
     ]
-  ]
+end
+
+
+to apply-tsunami-raster [tsunami min_depth max_depth]
+  gis:apply-raster tsunami flow_depth
+  ; ask patches with [flow_depth = -9999][set flow_depth 0]  ; TODO: change -9999
+  ask patches with [not ((flow_depth <= 0) or (flow_depth >= 0))][set flow_depth 0]
+  ask patches [ set pcolor scale-color blue flow_depth min_depth max_depth ]
 end
 
 
@@ -286,6 +297,7 @@ to load-pedestrians
     set density_factor 1  ; TODO
     set depar_time (depar_time / seconds_per_tick)                     ; cast seconds to ticks
     set base_speed (base_speed * seconds_per_tick / meters_per_patch)  ; cast meter/second to patch/tick
+    set speed 0
     set total_distance 0
     set end_time 0
   ]
@@ -554,6 +566,7 @@ to setup
   load-nodes
   load-shelters
   load-roads
+  load-tsunami-inundation
   load-evacuation-routes
   load-pedestrians
   output-print "Setup done"
@@ -561,12 +574,6 @@ end
 
 
 to go
-  if ticks > max_seconds / seconds_per_tick ; stopper
-    [
-      write-output
-      output-print (word "Simulation total time: " timer " seconds.")
-      stop
-    ]
   update-tsunami-inundation
   update-dead-pedestrians
   start-to-evacuate
@@ -574,6 +581,12 @@ to go
   move-pedestrians
   update-evacuee-count-list
   update-pedestrian-status-list
+  if ticks = (max_seconds / seconds_per_tick)
+  [
+    write-output
+    output-print (word "Simulation total time: " timer " seconds.")
+    stop
+   ]
   tick
 end
 @#$#@#$#@
@@ -745,6 +758,34 @@ alternate_shelter_radius_meters
 1
 0
 Number
+
+PLOT
+889
+269
+1413
+420
+Pedestrian speed
+NIL
+NIL
+0.0
+10.0
+0.0
+1.0
+true
+false
+"" ""
+PENS
+"mean_speed" 1.0 0 -16777216 true "" "plot mean [speed] of pedestrians"
+
+CHOOSER
+4
+648
+161
+693
+tsunami_flow_depth
+tsunami_flow_depth
+"continuous" "conservative"
+1
 
 @#$#@#$#@
 ## WHAT IS IT?
