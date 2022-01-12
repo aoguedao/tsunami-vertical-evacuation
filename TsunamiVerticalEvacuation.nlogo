@@ -17,8 +17,8 @@ patches-own [
 
 nodes-own[
   id                   ; Open Street Map node id
-  horizontal_route
-  vertical_route
+  ;horizontal_route
+  ;vertical_route
   shelter?             ; True if it is a shelter
   evac_type            ; Evacuation shelter type if it is a shelter, else 0
   capacity             ; Evacuee capacity
@@ -66,6 +66,9 @@ globals [
   node_dataset                ; Urban network nodes dataset
   shelter_dataset             ; Shelters dataset
   agent_distribution_dataset  ; Agent distribution dataset
+  horizontal_routes           ; List of horizontal routes for each node
+  vertical_routes             ; List of vertical routes for each node
+  alternative_shelter_routes  ; List routes for each shelter
   tsunami_sample_dataset      ; Sample tsunami inundation raster dataset
   min_flow_depth              ; Minimum flow depth for tsunami color palette
   max_flow_depth              ; Maximum flow depth for tsunami color palette
@@ -86,7 +89,9 @@ globals [
   ;; OTHERS ;;
   ;;;;;;;;;;;;
   reach_node_tolerance        ; Float point tolerance for arriving at nodes
+  alternate_shelter_radius
   shelters_agenset            ; Agenset of shelters
+  nodes_id_table              ; Table where keys are OSM id from each node and value is the node itself
   pedestrian_status_list      ; For making output
   aux
 ]
@@ -94,17 +99,12 @@ globals [
 
 to-report get-node [node_id]
   ; Return who number based on node id
-  let who_number [who] of nodes with [id = node_id]
-  ifelse length who_number = 1 [
-    report node item 0 who_number
-  ][
-    report nobody
-  ]
+  report table:get-or-default nodes_id_table node_id nobody
 end
 
 
 to-report get-who-node [node_id]
-  report [who] of get-node node_id
+  report [who] of table:get-or-default nodes_id_table node_id nobody
 end
 
 
@@ -156,6 +156,7 @@ to read-gis-files
   set reach_node_tolerance (reach_node_tolerance_meters / meters_per_patch)
   let min_density_factor_meters (table:get-or-default config "min_density_factor_meters" 0.1)
   set min_density_factor (min_density_factor_meters / meters_per_patch)
+  set alternate_shelter_radius (alternate_shelter_radius_meters / meters_per_patch)
 end
 
 
@@ -169,26 +170,8 @@ to load-nodes
     set shelter? false
     set evac_type 0
   ]
-  let horizontal_routes table:from-json-file ( word
-    absolute_data_path
-    pathdir:get-separator
-    "urban_network"
-    pathdir:get-separator
-    "horizontal_evacuation_routes.json"
-  )
-  let vertical_routes table:from-json-file ( word
-    absolute_data_path
-    pathdir:get-separator
-    "urban_network"
-    pathdir:get-separator
-    "vertical_evacuation_routes.json"
-  )
-  ask nodes [
-    let horizontal_route_id table:get horizontal_routes (word id)
-    let vertical_route_id table:get vertical_routes (word id)
-    set horizontal_route map get-who-node horizontal_route_id
-    set vertical_route map get-who-node vertical_route_id
-  ]
+  set nodes_id_table table:make
+  ask nodes [ table:put nodes_id_table id self ]
   output-print "Nodes Loaded"
 end
 
@@ -231,6 +214,42 @@ to load-roads
     ]
   ]
   output-print "Roads Loades"
+end
+
+
+to load-evacuation-routes
+  let horizontal_routes_tmp table:from-json-file ( word
+    absolute_data_path
+    pathdir:get-separator
+    "evacuation_routes"
+    pathdir:get-separator
+    "horizontal_evacuation_routes.json"
+  )
+  let vertical_routes_tmp table:from-json-file ( word
+    absolute_data_path
+    pathdir:get-separator
+    "evacuation_routes"
+    pathdir:get-separator
+    "vertical_evacuation_routes.json"
+  )
+  let alternative_shelter_routes_tmp table:from-json-file ( word
+    absolute_data_path
+    pathdir:get-separator
+    "evacuation_routes"
+    pathdir:get-separator
+    "alternative_shelter_evacuation_routes.json"
+  )
+  set horizontal_routes table:make
+  set vertical_routes table:make
+  set alternative_shelter_routes table:make
+  ask nodes [
+    table:put horizontal_routes (who) (map get-who-node table:get horizontal_routes_tmp (word id))
+    table:put vertical_routes (who) (map get-who-node table:get vertical_routes_tmp (word id))
+  ]
+  ask shelters_agenset [
+    table:put alternative_shelter_routes (who) (map get-who-node table:get alternative_shelter_routes_tmp (word id))
+  ]
+  output-print "Evacuation Routes Loaded"
 end
 
 
@@ -307,7 +326,6 @@ to start-to-evacuate
     [
       set next_node min-one-of nodes [distance myself]
       set route ( get-route next_node decision )
-      ;set goal_shelter_id ( ifelse-value (is-list? route) [ last route ][ 0 ] )
       set goal_shelter_id (last route )
       set started? true
       set moving? true
@@ -345,9 +363,9 @@ end
 to-report get-route [from_node evacuation_decision ]
   (
     ifelse
-      evacuation_decision = "horizontal" [ report [horizontal_route] of from_node ]
-      evacuation_decision = "vertical"   [ report [vertical_route] of from_node ]
-                                         [ report [] ]
+    evacuation_decision = "horizontal" [ report table:get horizontal_routes [who] of from_node ]
+    evacuation_decision = "vertical"   [ report table:get vertical_routes [who] of from_node ]
+                                       [ report [] ]
    )
 end
 
@@ -371,7 +389,7 @@ to move-pedestrians
       set total_distance (total_distance + distance_to_next_node)
       ; Check if next node is a shelter
       if ( [shelter?] of current_node ) [
-        ifelse ( [evacuee_count < capacity] of current_node ) [ mark-evacuated ][ update-backup-route ]
+        ifelse ( [evacuee_count < capacity] of current_node ) [ mark-evacuated ][ alternate-route ]
       ]
     ]
   ]
@@ -404,9 +422,20 @@ to update-density-factor
     ]
 end
 
-to update-backup-route
-  print "Update backup route!"
+
+to alternate-route
+  let shelters_in_radius ( nodes with [shelter?] in-radius alternate_shelter_radius )
+  let horizontal_shelters_in_radius ( shelters_in_radius with [evac_type = "horizontal"] )
+  ifelse ( any? horizontal_shelters_in_radius ) [
+    set route ( table:get alternative_shelter_routes [who] of (one-of horizontal_shelters_in_radius) )
+    print "Routing to horizontal shelter"
+  ]
+  [
+    set route ( table:get alternative_shelter_routes [who] of (one-of shelters_in_radius) )
+    print "Routing to another vertical shelter"
+  ]
 end
+
 
 to mark-evacuated
   ; Mark pedestrian as evacuated
@@ -525,6 +554,7 @@ to setup
   load-nodes
   load-shelters
   load-roads
+  load-evacuation-routes
   load-pedestrians
   output-print "Setup done"
 end
@@ -701,6 +731,17 @@ INPUTBOX
 556
 vert_evacuation_willingness_prob
 0.2
+1
+0
+Number
+
+INPUTBOX
+5
+575
+160
+635
+alternate_shelter_radius_meters
+500.0
 1
 0
 Number
