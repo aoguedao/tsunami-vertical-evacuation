@@ -27,7 +27,8 @@ nodes-own[
 roads-own [
   road_length        ; Road length in meters
   road_width         ; Road width in meters
-  slope              ; Road slope in meters
+  slope              ; Road slope
+  lanes              ; Number of lanes
 ]
 
 pedestrians-own[
@@ -38,14 +39,14 @@ pedestrians-own[
   depar_time          ; Departure time
   base_speed          ; Average speed according to pedestrian age
   speed               ; Current speed
-  slope_factor        ; TODO
-  density_factor      ; TODO
+  slope_factor        ; Slope factor for modifiying pedestrian speed
   decision            ; "horizontal": Horizontal, "ver": Vertical or "no": Not willing to evacuate
   route               ; List of "who" from nodes remaining to reach the shelter
   goal_shelter_id     ; Goal shelter OSM id of their evacuation route
   current_node        ; Current node of their evacuation route
   next_node           ; Next node of their evacuation route
   current_road        ; Road where pedestrian is on
+  road_lane           ; Road lane
   started?            ; True if the pedestrian has started to evacuate
   moving?             ; True if the pedestrian is evacuating (and their is not dead)
   in_node?            ; True if the pedestrian is on a node (in order to get their next node)
@@ -105,14 +106,6 @@ end
 to-report get-who-node [node_id]
   report [who] of table:get-or-default nodes_id_table node_id nobody
 end
-
-
-;to-report get-road [node1 node2]
-;  ; Return road according start and end nodes
-;  let node1_who [who] of node1
-;  let node2_who [who] of node2
-;  report road node1_who node2_who
-;end
 
 
 to initial-values
@@ -208,6 +201,7 @@ to load-roads
         set road_length ((gis:property-value i "length") / meters_per_patch)
         set road_width ((gis:property-value i "width") / meters_per_patch)
         set slope gis:property-value i "slope"
+        set lanes gis:property-value i  "lanes"
         ;set shape "line"
       ]
     ]
@@ -296,8 +290,7 @@ to load-pedestrians
     set in_node? false
     set evacuated? false
     set dead? false
-    set slope_factor 1 ; TODO
-    set density_factor 1  ; TODO
+    set slope_factor 1
     set depar_time (depar_time / seconds_per_tick)                     ; cast seconds to ticks
     set base_speed (base_speed * seconds_per_tick / meters_per_patch)  ; cast meter/second to patch/tick
     set speed 0
@@ -339,7 +332,7 @@ to start-to-evacuate
   ; Validate if pedestrian must start to evacuate according their departure time
   ask pedestrians with [not started? and depar_time <= ticks]
     [
-      set next_node min-one-of nodes [distance myself]
+      set next_node ( min-one-of nodes [distance myself] )
       set route ( get-route next_node decision )
       set goal_shelter_id (last route )
       set started? true
@@ -357,10 +350,12 @@ to update-route
     if next_node != nobody [
       set heading towards next_node
       set in_node? false
+      set road_lane ifelse-value (current_road != nobody ) [ (random [lanes] of current_road) + 1] [ 1 ]
       update-slope-factor
     ]
   ]
 end
+
 
 to set-next-node
   let rnd_confusion_ratio random-float 1
@@ -387,7 +382,7 @@ end
 
 
 to set-current-road
-  ifelse ( current_node != nobody )
+  ifelse ( current_node != nobody and next_node != nobody)
   [ set current_road (road ([who] of current_node) ([who] of next_node)) ]
   [ set current_road nobody ]
 end
@@ -397,22 +392,11 @@ to move-pedestrians
   ; Move pedestrians updating their speed
   ask pedestrians with [moving? and not in_node?][
     update-speed  ; Current speed updated by slope and density factors
-    let distance_to_move min (list speed (distance next_node))
     ; If next node is to close then the pedestrian reach the next node
+    let distance_to_move min (list speed (distance next_node))
     fd distance_to_move
     set total_distance (total_distance + distance_to_move)
-    ; Check if pedestrian has reached next node
-    let distance_to_next_node distance next_node
-    if (distance_to_next_node < reach_node_tolerance ) [
-      fd distance_to_next_node
-      set in_node? true
-      set current_node next_node
-      set total_distance (total_distance + distance_to_next_node)
-      ; Check if next node is a shelter
-      if ( [shelter?] of current_node ) [
-        ifelse ( [evacuee_count < capacity] of current_node ) [ mark-evacuated ][ alternate-route ]
-      ]
-    ]
+    check-reach-node
   ]
 end
 
@@ -421,7 +405,7 @@ to update-slope-factor
   ; Update slope factor according to road slope
   if current_road != nobody [
     let slope_road ( [slope] of current_road )
-    set slope_factor ( precision (exp(-3.5 * abs(slope_road + 0.05) + 0.175)) 3 )
+    set slope_factor (exp(-3.5 * abs(slope_road + 0.05) + 0.175))
   ]
 end
 
@@ -430,12 +414,14 @@ to update-speed
   ; Get pedestrian density
   let slope_speed ( base_speed * slope_factor )
   let max_distance_to_move min (list slope_speed (distance next_node))
-  let x1 xcor
-  let x2 (max_distance_to_move * dx)
-  let pedestrian_current_road current_road
+  let x1 ( xcor )
+  let x2 ( max_distance_to_move * dx )
+  let pedestrian_current_road ( current_road )
+  let pedestrian_current_lane ( road_lane)
   let n_pedestrians_ahead (
     count pedestrians with [
       ( current_road = pedestrian_current_road )
+      and ( road_lane = pedestrian_current_lane)
       and ( xcor >= x1 )
       and ( xcor <= x2 )
     ]
@@ -445,17 +431,6 @@ to update-speed
     [ 6 / meters_per_patch]  ; when pedestrian is not walking over a road
   let pedestrian_density (n_pedestrians_ahead / (route_width * max_distance_to_move))
   set speed (goto-speed-density slope_speed pedestrian_density )
-  ; Update density factor according to pedestrians around them
-  ; Count pedestrians around them
-  ; TODO: update units of ticks and depar_time
-  ;let n_pedestrians_within_radius (count ((pedestrians with [moving?]) in-radius (pedestrian_counting_radius)))
-  ;let pedestrian_density (n_pedestrians_within_radius / (2 * pedestrian_counting_radius * current_route_width))
-  ;ifelse pedestrian_density = 0
-  ;  [ set density_factor 1 ]
-  ;  [ ifelse pedestrian_density < jammed_pedestrian_density
-  ;      [set density_factor precision (1 - EXP(-1.913 * (1 / pedestrian_density - 1 / jammed_pedestrian_density))) 3]
-  ;      [set density_factor min_density_factor]
-  ;  ]
 end
 
 
@@ -465,11 +440,37 @@ to-report goto-speed-density [speed_p density_p]
   let threshold ( 1 - 0.343347 * (s - 1.5) )
   (ifelse
     ( p <= threshold )          [ report s ]
-    ( p > threshold and p <= 1) [ report -2.9125 * (p - 1.0)  + 1.5 ]  ; line slope (3.83 - 1.5) / (0.2 - 1.0)
+    ( p > threshold and p <= 1) [ report -2.9125 * (p - 1.0)  + 1.5 ]   ; line slope (3.83 - 1.5) / (0.2 - 1.0)
     ( p > 1.0 and p <= 1.7)     [ report -1.071428 * (p - 1.0) + 1.5 ]  ; line slope : (1.5 - 0.75) / (1.0 - 1.7)
-    ( p > 1.7 and p <= 6.0)     [ report -0.174418 * (p - 6.0) ]  ; line slope : 0.75 / (1.7 - 6.0)
+    ( p > 1.7 and p <= 6.0)     [ report -0.174418 * (p - 6.0) ]        ; line slope : 0.75 / (1.7 - 6.0)
                                 [ report 0 ]
   )
+end
+
+to check-reach-node
+  ; Check if pedestrian has reached next node
+  let distance_to_next_node distance next_node
+  if (distance_to_next_node < reach_node_tolerance ) [
+    fd distance_to_next_node
+    set in_node? true
+    set current_node next_node
+    set total_distance (total_distance + distance_to_next_node)
+    ; Check if next node is a shelter
+    if ( [shelter?] of current_node ) [
+      ifelse ( [evacuee_count < capacity] of current_node ) [ mark-evacuated ][ alternate-route ]
+    ]
+  ]
+end
+
+
+to mark-evacuated
+  ; Mark pedestrian as evacuated
+  set speed 0
+  set evacuated? true
+  set moving? false
+  set end_time ticks
+  set color green
+  ask current_node [set evacuee_count (evacuee_count + 1)]
 end
 
 
@@ -484,16 +485,6 @@ to alternate-route
     set route ( table:get alternative_shelter_routes [who] of (one-of shelters_in_radius) )
     print "Routing to another vertical shelter"
   ]
-end
-
-
-to mark-evacuated
-  ; Mark pedestrian as evacuated
-  set evacuated? true
-  set moving? false
-  set end_time ticks
-  set color green
-  ask current_node [set evacuee_count (evacuee_count + 1)]
 end
 
 
@@ -781,7 +772,7 @@ INPUTBOX
 159
 556
 vert_evacuation_willingness_prob
-0.2
+0.0
 1
 0
 Number
@@ -813,7 +804,7 @@ true
 false
 "" ""
 PENS
-"mean" 1.0 0 -16777216 true "" "plot mean [speed] of pedestrians"
+"mean" 1.0 0 -16777216 true "" "plot mean [speed] of pedestrians with [moving?]"
 
 CHOOSER
 4
