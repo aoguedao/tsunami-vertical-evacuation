@@ -45,6 +45,7 @@ pedestrians-own[
   goal_shelter_id     ; Goal shelter OSM id of their evacuation route
   current_node        ; Current node of their evacuation route
   next_node           ; Next node of their evacuation route
+  current_road        ; Road where pedestrian is on
   started?            ; True if the pedestrian has started to evacuate
   moving?             ; True if the pedestrian is evacuating (and their is not dead)
   in_node?            ; True if the pedestrian is on a node (in order to get their next node)
@@ -106,12 +107,12 @@ to-report get-who-node [node_id]
 end
 
 
-to-report get-road [node1 node2]
-  ; Return road according start and end nodes
-  let node1_who [who] of node1
-  let node2_who [who] of node2
-  report road node1_who node2_who
-end
+;to-report get-road [node1 node2]
+;  ; Return road according start and end nodes
+;  let node1_who [who] of node1
+;  let node2_who [who] of node2
+;  report road node1_who node2_who
+;end
 
 
 to initial-values
@@ -252,15 +253,17 @@ end
 
 
 to load-tsunami-inundation
-  ( ifelse
+  (
+    ifelse
     tsunami_flow_depth = "continuous" [ output-print "Tsunami inundation raster will be loaded in each tick"]
     tsunami_flow_depth = "conservative" [
       let tsunami_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator  "conservative_inundation.asc")
       apply-tsunami-raster tsunami_dataset min_flow_depth max_flow_depth
     ]
     [output-print "WARNING: Tsunami flow depth type is not recognized"]
-   )
+  )
 end
+
 
 to update-tsunami-inundation
   ; load tsunamis raster
@@ -349,7 +352,8 @@ end
 to update-route
   ; Update next node, heading and slope factor of of each pedestrian
   ask pedestrians with [ moving? and in_node? ][
-    get-next-node
+    set-next-node
+    set-current-road
     if next_node != nobody [
       set heading towards next_node
       set in_node? false
@@ -358,7 +362,7 @@ to update-route
   ]
 end
 
-to get-next-node
+to set-next-node
   let rnd_confusion_ratio random-float 1
   ifelse ( rnd_confusion_ratio >= confusion_ratio or current_node = nobody)
   [
@@ -382,14 +386,19 @@ to-report get-route [from_node evacuation_decision ]
 end
 
 
+to set-current-road
+  ifelse ( current_node != nobody )
+  [ set current_road (road ([who] of current_node) ([who] of next_node)) ]
+  [ set current_road nobody ]
+end
+
+
 to move-pedestrians
   ; Move pedestrians updating their speed
   ask pedestrians with [moving? and not in_node?][
-    ; update-density-factor  ; CHECK!
-    ; Current speed updated by slope and density factors
-    set speed (base_speed * slope_factor * density_factor)
-    ; If next node is to close then the pedestrian reach the next node
+    update-speed  ; Current speed updated by slope and density factors
     let distance_to_move min (list speed (distance next_node))
+    ; If next node is to close then the pedestrian reach the next node
     fd distance_to_move
     set total_distance (total_distance + distance_to_move)
     ; Check if pedestrian has reached next node
@@ -410,28 +419,57 @@ end
 
 to update-slope-factor
   ; Update slope factor according to road slope
-  if current_node != nobody [
-    let slope_road ( [slope] of get-road current_node next_node )
+  if current_road != nobody [
+    let slope_road ( [slope] of current_road )
     set slope_factor ( precision (exp(-3.5 * abs(slope_road + 0.05) + 0.175)) 3 )
   ]
 end
 
 
-to update-density-factor
-  ; Update density factor according to pedestrians around them
-  let current_route_width ifelse-value (current_node != nobody and next_node != nobody)
-    [[road_width] of get-road current_node next_node]
+to update-speed
+  ; Get pedestrian density
+  let slope_speed ( base_speed * slope_factor )
+  let max_distance_to_move min (list slope_speed (distance next_node))
+  let x1 xcor
+  let x2 (max_distance_to_move * dx)
+  let pedestrian_current_road current_road
+  let n_pedestrians_ahead (
+    count pedestrians with [
+      ( current_road = pedestrian_current_road )
+      and ( xcor >= x1 )
+      and ( xcor <= x2 )
+    ]
+  )
+  let route_width ifelse-value (current_road != nobody)
+    [[road_width] of current_road]
     [ 6 / meters_per_patch]  ; when pedestrian is not walking over a road
+  let pedestrian_density (n_pedestrians_ahead / (route_width * max_distance_to_move))
+  set speed (goto-speed-density slope_speed pedestrian_density )
+  ; Update density factor according to pedestrians around them
   ; Count pedestrians around them
   ; TODO: update units of ticks and depar_time
-  let n_pedestrians_within_radius (count ((pedestrians with [moving?]) in-radius (pedestrian_counting_radius)))
-  let pedestrian_density (n_pedestrians_within_radius / (2 * pedestrian_counting_radius * current_route_width))
-  ifelse pedestrian_density = 0
-    [ set density_factor 1 ]
-    [ ifelse pedestrian_density < jammed_pedestrian_density
-        [set density_factor precision (1 - EXP(-1.913 * (1 / pedestrian_density - 1 / jammed_pedestrian_density))) 3]
-        [set density_factor min_density_factor]
-    ]
+  ;let n_pedestrians_within_radius (count ((pedestrians with [moving?]) in-radius (pedestrian_counting_radius)))
+  ;let pedestrian_density (n_pedestrians_within_radius / (2 * pedestrian_counting_radius * current_route_width))
+  ;ifelse pedestrian_density = 0
+  ;  [ set density_factor 1 ]
+  ;  [ ifelse pedestrian_density < jammed_pedestrian_density
+  ;      [set density_factor precision (1 - EXP(-1.913 * (1 / pedestrian_density - 1 / jammed_pedestrian_density))) 3]
+  ;      [set density_factor min_density_factor]
+  ;  ]
+end
+
+
+to-report goto-speed-density [speed_p density_p]
+  let s ( speed_p * meters_per_patch / seconds_per_tick )
+  let p ( density_p / meters_per_patch ^ 2 )
+  let threshold ( 1 - 0.343347 * (s - 1.5) )
+  (ifelse
+    ( p <= threshold )          [ report s ]
+    ( p > threshold and p <= 1) [ report -2.9125 * (p - 1.0)  + 1.5 ]  ; line slope (3.83 - 1.5) / (0.2 - 1.0)
+    ( p > 1.0 and p <= 1.7)     [ report -1.071428 * (p - 1.0) + 1.5 ]  ; line slope : (1.5 - 0.75) / (1.0 - 1.7)
+    ( p > 1.7 and p <= 6.0)     [ report -0.174418 * (p - 6.0) ]  ; line slope : 0.75 / (1.7 - 6.0)
+                                [ report 0 ]
+  )
 end
 
 
@@ -635,9 +673,9 @@ NIL
 1
 
 BUTTON
-95
+94
 10
-158
+157
 43
 NIL
 go
@@ -765,8 +803,8 @@ PLOT
 1413
 420
 Pedestrian speed
-NIL
-NIL
+time
+speed
 0.0
 10.0
 0.0
@@ -775,7 +813,7 @@ true
 false
 "" ""
 PENS
-"mean_speed" 1.0 0 -16777216 true "" "plot mean [speed] of pedestrians"
+"mean" 1.0 0 -16777216 true "" "plot mean [speed] of pedestrians"
 
 CHOOSER
 4
@@ -785,7 +823,7 @@ CHOOSER
 tsunami_flow_depth
 tsunami_flow_depth
 "continuous" "conservative"
-1
+0
 
 @#$#@#$#@
 ## WHAT IS IT?
