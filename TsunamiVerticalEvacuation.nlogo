@@ -82,8 +82,8 @@ globals [
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;;;;;;;;;;     DENSITY     ;;;;;;;;;;
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-  pedestrian_counting_radius  ; Radius for density counting
-  min_density_factor          ; Minimum density factor
+  ;pedestrian_counting_radius  ; Radius for density counting
+  ;min_density_factor          ; Minimum density factor
 
   ;;;;;;;;;;;;
   ;; OTHERS ;;
@@ -111,7 +111,8 @@ end
 to initial-values
   ; Initial values based on configuration file
   set absolute_data_path (word pathdir:get-model-path pathdir:get-separator data_path)
-  set config (table:from-json-file (word absolute_data_path pathdir:get-separator "config.json"))
+  let config_filepath (word absolute_data_path pathdir:get-separator "config.json")
+  set config (table:from-json-file config_filepath )
   set seconds_per_tick (table:get-or-default config "seconds_per_tick" 10)
   set max_seconds (table:get-or-default config "max_seconds" 3600)
   ; Tsunami inundation scale
@@ -119,6 +120,24 @@ to initial-values
   set max_flow_depth (table:get config "max_flow_depth")
   ; Outputs
   set pedestrian_status_list (list ["moving" "evacuated" "dead"])
+  ; Output prints
+  output-print ( word "[data_path]: " absolute_data_path )
+  output-print ( word "[tsunami_flow_depth]: " tsunami_flow_depth )
+  output-print ( word "[agent_distribution_type]: " agent_distribution_type )
+  output-print ( word "[evacuation_route_type]: " evacuation_route_type )
+  output-print ( word "[flow_depth_threshold]: " flow_depth_threshold )
+  output-print ( word "[evacuation_willingness_prob]: " evacuation_willingness_prob )
+  output-print ( word "[vert_evacuation_willingness_prob]: " vert_evacuation_willingness_prob )
+  output-print ( word "[confusion_ratio]: " confusion_ratio )
+  output-print ( word "[alternate_shelter_radius_meters]: " alternate_shelter_radius_meters )
+  output-print ( word "[config_filepath]: " config_filepath )
+  output-print ( word "[seconds_per_tick]: " seconds_per_tick  )
+  output-print ( word "[max_seconds]: " max_seconds )
+  output-print ( word "[min_flow_depth]: " min_flow_depth )
+  output-print ( word "[max_flow_depth]: " max_flow_depth )
+
+
+  output-print ( word date-and-time " - Initial values loaded" )
 end
 
 
@@ -127,7 +146,7 @@ to read-gis-files
   set urban_network_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "urban_network" pathdir:get-separator "urban_network.shp")
   set node_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "urban_network" pathdir:get-separator "nodes.shp")
   set shelter_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "shelters" pathdir:get-separator "shelters.shp")
-  set agent_distribution_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "agent_distribution" pathdir:get-separator "agent_distribution.shp")
+  set agent_distribution_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "agent_distribution" pathdir:get-separator agent_distribution_type pathdir:get-separator "agent_distribution.shp")
   set tsunami_sample_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator "sample.asc")
 
   let world_envelope (
@@ -143,12 +162,17 @@ to read-gis-files
   let gis_world_width (item 1 world_envelope - item 0 world_envelope)                                     ; real world width in meters
   let gis_world_height (item 3 world_envelope - item 2 world_envelope)                                    ; real world height in meters
   set meters_per_patch max (list (gis_world_height / world-width) (gis_world_height / world-height))
-  set pedestrian_counting_radius (pedestrian_counting_radius_meters / meters_per_patch)
+  ;set pedestrian_counting_radius (pedestrian_counting_radius_meters / meters_per_patch)
   let reach_node_tolerance_meters (table:get-or-default config "reach_node_tolerance" 0.05)
   set reach_node_tolerance (reach_node_tolerance_meters / meters_per_patch)
   let min_density_factor_meters (table:get-or-default config "min_density_factor_meters" 0.1)
-  set min_density_factor (min_density_factor_meters / meters_per_patch)
+  ;set min_density_factor (min_density_factor_meters / meters_per_patch)
   set alternate_shelter_radius (alternate_shelter_radius_meters / meters_per_patch)
+  ; Output printing
+  output-print ( word "[meters_per_patch]: " meters_per_patch )
+  output-print ( word "[reach_node_tolerance]: " reach_node_tolerance )
+  output-print ( word "[alternate_shelter_radius]: " alternate_shelter_radius )
+  output-print ( word date-and-time " - GIS files readed" )
 end
 
 
@@ -164,7 +188,7 @@ to load-nodes
   ]
   set nodes_id_table table:make
   ask nodes [ table:put nodes_id_table id self ]
-  output-print "Nodes Loaded"
+  output-print ( word date-and-time " - Nodes loaded" )
 end
 
 
@@ -186,7 +210,7 @@ to load-shelters
     ]
   ]
   set shelters_agenset nodes with [shelter?]
-  output-print "Shelters Loaded"
+  output-print ( word date-and-time " - Sheltersloaded" )
 end
 
 
@@ -206,7 +230,7 @@ to load-roads
       ]
     ]
   ]
-  output-print "Roads Loades"
+  output-print ( word date-and-time " - Roads loaded" )
 end
 
 
@@ -216,6 +240,8 @@ to load-evacuation-routes
     pathdir:get-separator
     "evacuation_routes"
     pathdir:get-separator
+    evacuation_route_type
+    pathdir:get-separator
     "horizontal_evacuation_routes.json"
   )
   let vertical_routes_tmp table:from-json-file ( word
@@ -223,12 +249,16 @@ to load-evacuation-routes
     pathdir:get-separator
     "evacuation_routes"
     pathdir:get-separator
+    evacuation_route_type
+    pathdir:get-separator
     "vertical_evacuation_routes.json"
   )
   let alternative_shelter_routes_tmp table:from-json-file ( word
     absolute_data_path
     pathdir:get-separator
     "evacuation_routes"
+    pathdir:get-separator
+    evacuation_route_type
     pathdir:get-separator
     "alternative_shelter_evacuation_routes.json"
   )
@@ -242,19 +272,22 @@ to load-evacuation-routes
   ask shelters_agenset [
     table:put alternative_shelter_routes (who) (map get-who-node table:get alternative_shelter_routes_tmp (word id))
   ]
-  output-print "Evacuation Routes Loaded"
+  output-print ( word date-and-time " - Evacuation Routes Loaded" )
 end
 
 
 to load-tsunami-inundation
   (
     ifelse
-    tsunami_flow_depth = "continuous" [ output-print "Tsunami inundation raster will be loaded in each tick"]
+    tsunami_flow_depth = "continuous" [
+      output-print ( word  date-and-time " - Tsunami inundation raster will be loaded continuously in each tick")
+    ]
     tsunami_flow_depth = "conservative" [
       let tsunami_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator  "conservative_inundation.asc")
       apply-tsunami-raster tsunami_dataset min_flow_depth max_flow_depth
+      output-print ( word  date-and-time " - Conservative Tsunami inundation Loaded")
     ]
-    [output-print "WARNING: Tsunami flow depth type is not recognized"]
+    [output-print ( word  date-and-time " - WARNING: Tsunami flow depth type is not recognized" )]
   )
 end
 
@@ -298,7 +331,7 @@ to load-pedestrians
     set end_time 0
   ]
   make-evacuation-decision
-  output-print "Pedestrians Loaded"
+  output-print ( word date-and-time " - Pedestrians Loaded" )
 end
 
 
@@ -324,7 +357,7 @@ to make-evacuation-decision
       set depar_time ( max_seconds / seconds_per_tick + 1 )  ; Inifinite departure time
     ]
   ]
-
+  output-print ( word date-and-time " - Pedestrians have made their evacuation decision" )
 end
 
 
@@ -390,8 +423,8 @@ end
 
 to move-pedestrians
   ; Move pedestrians updating their speed
+  update-speed  ; Current speed updated by slope and density factors
   ask pedestrians with [moving? and not in_node?][
-    update-speed  ; Current speed updated by slope and density factors
     ; If next node is to close then the pedestrian reach the next node
     let distance_to_move min (list speed (distance next_node))
     fd distance_to_move
@@ -412,29 +445,32 @@ end
 
 to update-speed
   ; Get pedestrian density
-  let slope_speed ( base_speed * slope_factor )
-  let max_distance_to_move min (list slope_speed (distance next_node))
-  let x1 ( xcor )
-  let x2 ( max_distance_to_move * dx )
-  let pedestrian_current_road ( current_road )
-  let pedestrian_current_lane ( road_lane)
-  let n_pedestrians_ahead (
-    count pedestrians with [
-      ( current_road = pedestrian_current_road )
-      and ( road_lane = pedestrian_current_lane)
-      and ( xcor >= x1 )
-      and ( xcor <= x2 )
-    ]
-  )
-  let route_width ifelse-value (current_road != nobody)
+  ask pedestrians with [moving? and not in_node?][
+    let slope_speed ( base_speed * slope_factor )
+    let max_distance_to_move min (list slope_speed (distance next_node))
+    let x1 ( xcor )
+    let x2 ( max_distance_to_move * dx )
+    let pedestrian_current_road ( current_road )
+    let pedestrian_current_lane ( road_lane)
+    let n_pedestrians_ahead (
+      count pedestrians with [
+        ( current_road = pedestrian_current_road )
+        and ( road_lane = pedestrian_current_lane)
+        and ( xcor >= x1 )
+        and ( xcor <= x2 )
+      ]
+    )
+    let route_width ifelse-value (current_road != nobody)
     [[road_width] of current_road]
     [ 6 / meters_per_patch]  ; when pedestrian is not walking over a road
-  let pedestrian_density (n_pedestrians_ahead / (route_width * max_distance_to_move))
-  set speed (goto-speed-density slope_speed pedestrian_density )
+    let pedestrian_density (n_pedestrians_ahead / (route_width * max_distance_to_move))
+    set speed (goto-speed-density slope_speed pedestrian_density )
+  ]
 end
 
 
 to-report goto-speed-density [speed_p density_p]
+  ; Goto speed density curve
   let s ( speed_p * meters_per_patch / seconds_per_tick )
   let p ( density_p / meters_per_patch ^ 2 )
   let threshold ( 1 - 0.343347 * (s - 1.5) )
@@ -457,6 +493,7 @@ to check-reach-node
     set total_distance (total_distance + distance_to_next_node)
     ; Check if next node is a shelter
     if ( [shelter?] of current_node ) [
+      ; Check if shelter is full
       ifelse ( [evacuee_count < capacity] of current_node ) [ mark-evacuated ][ alternate-route ]
     ]
   ]
@@ -475,6 +512,7 @@ end
 
 
 to alternate-route
+  ; Look for an alternative route
   let shelters_in_radius ( nodes with [shelter?] in-radius alternate_shelter_radius )
   let horizontal_shelters_in_radius ( shelters_in_radius with [evac_type = "horizontal"] )
   ifelse ( any? horizontal_shelters_in_radius ) [
@@ -494,6 +532,7 @@ to update-dead-pedestrians
     let flow_depth_here [flow_depth] of patch-here
     if flow_depth_here >= flow_depth_threshold
       [
+        set speed 0
         set moving? false
         set dead? true
         set end_time ticks
@@ -511,6 +550,7 @@ end
 
 
 to update-pedestrian-status-list
+  ; Update status list of pedestrian in each tick
   let n_moving count pedestrians with [moving?]
   let n_evacuated count pedestrians with [evacuated?]
   let n_dead count pedestrians with [dead?]
@@ -519,12 +559,13 @@ end
 
 
 to write-output
+  ; Write every output file
   set absolute_output_path ( word absolute_data_path pathdir:get-separator "output" )
   if behaviorspace-experiment-name != "" [
     set absolute_output_path ( word absolute_output_path pathdir:get-separator behaviorspace-experiment-name pathdir:get-separator behaviorspace-run-number )
   ]
   if not pathdir:isDirectory? absolute_output_path [ pathdir:create absolute_output_path ]
-  output-print ( word "Output path: " absolute_output_path)
+  output-print ( word "[absolute_output_path]: " absolute_output_path)
   ; Shelters output
   let shelter_evacuation_output (word absolute_output_path pathdir:get-separator "shelters_evacuation.csv")
   if file-exists? shelter_evacuation_output [ file-delete shelter_evacuation_output ]
@@ -532,12 +573,12 @@ to write-output
   let shelter_osm_id (list map [ x -> [id] of x ] sort shelters_agenset)
   let shelter_evacuation_list sentence shelter_osm_id matrix:to-column-list shelter_evacuation_matrix
   csv:to-file shelter_evacuation_output shelter_evacuation_list
-  output-print "Shelters output has been successfully written"
+  output-print (word date-and-time " - Shelters output has been successfully written" )
   ; Pedestrian-tick output
   let pedestrian_tick_output (word absolute_output_path pathdir:get-separator "pedestrian_ticks.csv")
   if file-exists? pedestrian_tick_output [ file-delete pedestrian_tick_output ]
   csv:to-file pedestrian_tick_output pedestrian_status_list
-  output-print "Pedestrian status per tick output has been successfully written"
+  output-print (word date-and-time " - Pedestrian status per tick output has been successfully written" )
   ; Pedestrian output
   let pedestrian_output (word absolute_output_path pathdir:get-separator "pedestrians.csv")
   if file-exists? pedestrian_output [ file-delete pedestrian_output ]
@@ -578,8 +619,9 @@ to write-output
     ] of pedestrians
   )
   csv:to-file pedestrian_output pedestrian_output_list
-  output-print "Pedestrian output has been successfully written"
+  output-print (word date-and-time " - Pedestrian output has been successfully written" )
   ; Simulation Output
+  output-print (word date-and-time " - Simulation has finalized and it took " timer " seconds.")
   let simulation_output (word absolute_output_path pathdir:get-separator "scenario_output.txt")
   if file-exists? simulation_output [ file-delete simulation_output ]
   export-output simulation_output
@@ -590,6 +632,11 @@ to setup
   clear-all
   reset-ticks
   reset-timer
+  output-print (word "--- Tsunami Vertical Evacuation Simulation ---" )
+  if (behaviorspace-experiment-name != "") [
+    output-print (word "Experiment: " behaviorspace-experiment-name " - Run " behaviorspace-run-number)
+  ]
+  output-print (word date-and-time " - Starting simulation" )
   initial-values
   read-gis-files
   load-nodes
@@ -598,7 +645,7 @@ to setup
   load-tsunami-inundation
   load-evacuation-routes
   load-pedestrians
-  output-print "Setup done"
+  output-print ( word date-and-time " - Setup has finalized succesfully" )
 end
 
 
@@ -613,7 +660,6 @@ to go
   if ticks = (max_seconds / seconds_per_tick)
   [
     write-output
-    output-print (word "Simulation total time: " timer " seconds.")
     stop
    ]
   tick
@@ -712,10 +758,10 @@ scenario_test
 String
 
 INPUTBOX
-4
-126
-158
-186
+6
+306
+160
+366
 flow_depth_threshold
 0.1
 1
@@ -723,32 +769,10 @@ flow_depth_threshold
 Number
 
 INPUTBOX
-4
-197
-157
-257
-jammed_pedestrian_density
-5.4
-1
-0
-Number
-
-INPUTBOX
 3
-273
+536
 158
-333
-pedestrian_counting_radius_meters
-0.3
-1
-0
-Number
-
-INPUTBOX
-4
-345
-159
-405
+596
 confusion_ratio
 0.1
 1
@@ -756,10 +780,10 @@ confusion_ratio
 Number
 
 INPUTBOX
-4
-417
-159
-477
+6
+382
+161
+442
 evacuation_willingness_prob
 0.9
 1
@@ -767,10 +791,10 @@ evacuation_willingness_prob
 Number
 
 INPUTBOX
-4
-496
-159
-556
+6
+461
+161
+521
 vert_evacuation_willingness_prob
 0.0
 1
@@ -778,10 +802,10 @@ vert_evacuation_willingness_prob
 Number
 
 INPUTBOX
-5
-575
-160
-635
+3
+616
+158
+676
 alternate_shelter_radius_meters
 500.0
 1
@@ -807,13 +831,33 @@ PENS
 "mean" 1.0 0 -16777216 true "" "plot mean [speed] of pedestrians with [moving?]"
 
 CHOOSER
-4
-648
-161
-693
+5
+127
+160
+172
 tsunami_flow_depth
 tsunami_flow_depth
 "continuous" "conservative"
+0
+
+CHOOSER
+3
+187
+160
+232
+agent_distribution_type
+agent_distribution_type
+"day" "night"
+0
+
+CHOOSER
+5
+246
+160
+291
+evacuation_route_type
+evacuation_route_type
+"shortest" "safest"
 0
 
 @#$#@#$#@
