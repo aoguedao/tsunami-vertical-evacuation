@@ -65,14 +65,16 @@ globals [
   urban_network_dataset       ; Urban network edges dataset
   node_dataset                ; Urban network nodes dataset
   shelter_dataset             ; Shelters dataset
-  agent_distribution_dataset  ; Agent distribution dataset
+  population_areas_dataset    ; Population areas dataset
   horizontal_routes           ; List of horizontal routes for each node
   vertical_routes             ; List of vertical routes for each node
   alternative_shelter_routes  ; List routes for each shelter
   tsunami_sample_dataset      ; Sample tsunami inundation raster dataset
   min_flow_depth              ; Minimum flow depth for tsunami color palette
   max_flow_depth              ; Maximum flow depth for tsunami color palette
-
+  speed_age_table
+  population_age_table
+  population_age_cdf
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;;;;;;;;; CONVERSION RATIOS ;;;;;;;;;
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -98,13 +100,50 @@ globals [
 
 
 to-report get-node [node_id]
-  ; Return who number based on node id
+  ; Return node (turtle) based on node id
   report table:get-or-default nodes_id_table node_id nobody
 end
 
 
 to-report get-who-node [node_id]
   report [who] of table:get-or-default nodes_id_table node_id nobody
+end
+
+
+to-report rayleigh-random [sigma]
+  report sqrt((- ln(1 - random-float 1 ))*(2 *(sigma ^ 2)))
+end
+
+
+to make-age-population-cdf
+  set population_age_cdf table:make
+  table:remove population_age_table "age"
+  let total_population ( sum(table:values population_age_table) )
+  let age_cum_population 0
+  (
+    foreach sort table:keys population_age_table [ age_key ->
+      let age_population table:get population_age_table age_key
+      set age_cum_population ( age_cum_population + age_population )
+      table:put population_age_cdf ( age_cum_population / total_population ) age_key
+    ]
+  )
+end
+
+
+to-report simulate-age
+  let u random-float 1
+  report table:get population_age_cdf min(filter [ i -> i >= u ] table:keys population_age_cdf)
+end
+
+
+to-report get-speed [pedestrian_age]
+  (
+    ifelse
+    (pedestrian_age <= 5)  [ report table:get speed_age_table 5 ]
+    (pedestrian_age >= 80) [ report table:get speed_age_table 80 ]
+                           [ report table:get speed_age_table pedestrian_age ]
+  )
+
 end
 
 
@@ -123,7 +162,7 @@ to initial-values
   ; Output prints
   output-print ( word "[data_path]: " absolute_data_path )
   output-print ( word "[tsunami_flow_depth]: " tsunami_flow_depth )
-  output-print ( word "[agent_distribution_type]: " agent_distribution_type )
+  output-print ( word "[agent_distribution_type]: " population_scenario )
   output-print ( word "[evacuation_route_type]: " evacuation_route_type )
   output-print ( word "[flow_depth_threshold]: " flow_depth_threshold )
   output-print ( word "[evacuation_willingness_prob]: " evacuation_willingness_prob )
@@ -142,19 +181,19 @@ end
 
 
 to read-gis-files
-  gis:load-coordinate-system (word absolute_data_path pathdir:get-separator "urban_network" pathdir:get-separator "urban_network.prj")
-  set urban_network_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "urban_network" pathdir:get-separator "urban_network.shp")
-  set node_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "urban_network" pathdir:get-separator "nodes.shp")
-  set shelter_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "shelters" pathdir:get-separator "shelters.shp")
-  set agent_distribution_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "agent_distribution" pathdir:get-separator agent_distribution_type pathdir:get-separator "agent_distribution.shp")
-  set tsunami_sample_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator "sample.asc")
+  gis:load-coordinate-system (word absolute_data_path pathdir:get-separator "urban" pathdir:get-separator "urban_network.prj")
+  set urban_network_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "urban" pathdir:get-separator "urban_network.shp")
+  set node_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "urban" pathdir:get-separator "urban_nodes.shp")
+  set shelter_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "shelters" pathdir:get-separator "shelters_node.shp")
+  set population_areas_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "population" pathdir:get-separator population_scenario pathdir:get-separator "population_areas.shp")
+  set tsunami_sample_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator "0.asc")
 
   let world_envelope (
     gis:envelope-union-of
       (gis:envelope-of urban_network_dataset)
       (gis:envelope-of node_dataset)
       (gis:envelope-of shelter_dataset)
-      (gis:envelope-of agent_distribution_dataset)
+      (gis:envelope-of population_areas_dataset)
       (gis:envelope-of tsunami_sample_dataset)
   )
   gis:set-world-envelope-ds world_envelope                                                                ; transformation from real world to netlogo world
@@ -218,14 +257,14 @@ to load-roads
   ; Load road as links
   ask roads [die]
   foreach gis:feature-list-of urban_network_dataset [ i ->
-    let from_node get-node gis:property-value i "from_id"
-    let to_node get-node gis:property-value i "to_id"
+    let from_node ( get-node gis:property-value i "from_id" )
+    let to_node ( get-node gis:property-value i "to_id" )
     ask from_node [
       create-road-to to_node [
         set road_length ((gis:property-value i "length") / meters_per_patch)
-        set sidewalk_width ((gis:property-value i "sidewalk_width") / meters_per_patch)
         set slope gis:property-value i "slope"
         set sidewalks gis:property-value i  "sidewalks"
+        set sidewalk_width ((gis:property-value i "sd_width") / meters_per_patch)
         ;set shape "line"
       ]
     ]
@@ -260,7 +299,7 @@ to load-evacuation-routes
     pathdir:get-separator
     evacuation_route_type
     pathdir:get-separator
-    "alternative_shelter_evacuation_routes.json"
+    "alternative_evacuation_routes.json"
   )
   set horizontal_routes table:make
   set vertical_routes table:make
@@ -314,21 +353,33 @@ end
 to load-pedestrians
   ; load pedestrian distribution
   ask pedestrians [ die ]
-  gis:create-turtles-from-points-manual agent_distribution_dataset pedestrians [["speed" "base_speed"]] [
-    set size 1.5
-    set shape "circle"
-    set current_node nobody
-    set started? false
-    set moving? false
-    set in_node? false
-    set evacuated? false
-    set dead? false
-    set slope_factor 1
-    set depar_time (depar_time / seconds_per_tick)                     ; cast seconds to ticks
-    set base_speed (base_speed * seconds_per_tick / meters_per_patch)  ; cast meter/second to patch/tick
-    set speed 0
-    set total_distance 0
-    set end_time 0
+  set population_age_table table:from-list (
+    csv:from-file (word absolute_data_path pathdir:get-separator "population" pathdir:get-separator "population_age.csv")
+  )
+  set speed_age_table table:from-list (
+    csv:from-file (word absolute_data_path pathdir:get-separator "population" pathdir:get-separator "speed_age.csv")
+  )
+  make-age-population-cdf
+  let departure_time_mean (departure_time_mean_in_sec / seconds_per_tick)
+  foreach gis:feature-list-of population_areas_dataset [ row ->
+    let n gis:property-value row "population"
+    gis:create-turtles-inside-polygon row pedestrians (n / 50 ) [
+      set size 1.5
+      set shape "circle"
+      set age simulate-age
+      set base_speed ( ( get-speed age ) * seconds_per_tick / meters_per_patch)
+      set depar_time ( (rayleigh-random departure_time_mean_in_sec) / seconds_per_tick )
+      set current_node nobody
+      set started? false
+      set moving? false
+      set in_node? false
+      set evacuated? false
+      set dead? false
+      set slope_factor 1
+      set speed 0
+      set total_distance 0
+      set end_time 0
+    ]
   ]
   make-evacuation-decision
   output-print ( word date-and-time " - Pedestrians Loaded" )
@@ -460,10 +511,10 @@ to update-speed
         and ( xcor <= x2 )
       ]
     )
-    let route_width ifelse-value (current_road != nobody)
+    let current_width ifelse-value (current_road != nobody)
     [[sidewalk_width] of current_road]
     [ 2 / meters_per_patch]  ; when pedestrian is not walking over a sidewalk
-    let pedestrian_density (n_pedestrians_ahead / (route_width * max_distance_to_move))
+    let pedestrian_density (n_pedestrians_ahead / (current_width * max_distance_to_move))
     set speed (goto-speed-density slope_speed pedestrian_density )
   ]
 end
@@ -752,7 +803,7 @@ INPUTBOX
 159
 116
 data_path
-scenario_test
+vina_del_mar
 1
 0
 String
@@ -802,10 +853,10 @@ vert_evacuation_willingness_prob
 Number
 
 INPUTBOX
-3
-616
-158
-676
+883
+450
+1038
+510
 alternate_shelter_radius_meters
 500.0
 1
@@ -845,9 +896,9 @@ CHOOSER
 187
 160
 232
-agent_distribution_type
-agent_distribution_type
-"day" "night"
+population_scenario
+population_scenario
+"daytime" "nighttime"
 0
 
 CHOOSER
@@ -859,6 +910,17 @@ evacuation_route_type
 evacuation_route_type
 "shortest" "safest"
 0
+
+INPUTBOX
+4
+620
+159
+680
+departure_time_mean_in_sec
+180.0
+1
+0
+Number
 
 @#$#@#$#@
 ## WHAT IS IT?
