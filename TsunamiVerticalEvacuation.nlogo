@@ -12,7 +12,7 @@ breed [ pedestrians pedestrian ]
 directed-link-breed [ roads road ]
 
 patches-own [
-  flow_depth              ; Tsunami flow_depth  // or depth?
+  flow_depth           ; Tsunami flow_depth  // or depth?
 ]
 
 nodes-own[
@@ -26,9 +26,9 @@ nodes-own[
 
 roads-own [
   road_length        ; Road length in meters
-  road_width         ; Road width in meters
   slope              ; Road slope
-  lanes              ; Number of lanes
+  sidewalks          ; Number of sidewalks
+  sidewalk_width     ; Width of each sidewalk in meters
 ]
 
 pedestrians-own[
@@ -223,9 +223,9 @@ to load-roads
     ask from_node [
       create-road-to to_node [
         set road_length ((gis:property-value i "length") / meters_per_patch)
-        set road_width ((gis:property-value i "width") / meters_per_patch)
+        set sidewalk_width ((gis:property-value i "sidewalk_width") / meters_per_patch)
         set slope gis:property-value i "slope"
-        set lanes gis:property-value i  "lanes"
+        set sidewalks gis:property-value i  "sidewalks"
         ;set shape "line"
       ]
     ]
@@ -383,7 +383,7 @@ to update-route
     if next_node != nobody [
       set heading towards next_node
       set in_node? false
-      set road_lane ifelse-value (current_road != nobody ) [ (random [lanes] of current_road) + 1] [ 1 ]
+      set road_lane ifelse-value (current_road != nobody ) [ (random [sidewalks] of current_road) + 1] [ 1 ]
       update-slope-factor
     ]
   ]
@@ -461,8 +461,8 @@ to update-speed
       ]
     )
     let route_width ifelse-value (current_road != nobody)
-    [[road_width] of current_road]
-    [ 6 / meters_per_patch]  ; when pedestrian is not walking over a road
+    [[sidewalk_width] of current_road]
+    [ 2 / meters_per_patch]  ; when pedestrian is not walking over a sidewalk
     let pedestrian_density (n_pedestrians_ahead / (route_width * max_distance_to_move))
     set speed (goto-speed-density slope_speed pedestrian_density )
   ]
