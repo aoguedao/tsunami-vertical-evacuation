@@ -744,9 +744,9 @@ ticks
 30.0
 
 BUTTON
-6
+5
 10
-69
+68
 43
 NIL
 setup
@@ -847,7 +847,7 @@ INPUTBOX
 161
 521
 vert_evacuation_willingness_prob
-0.0
+0.1
 1
 0
 Number
