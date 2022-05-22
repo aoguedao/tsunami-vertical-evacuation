@@ -12,7 +12,8 @@ breed [ pedestrians pedestrian ]
 directed-link-breed [ roads road ]
 
 patches-own [
-  flow_depth           ; Tsunami flow_depth  // or depth?
+  flow_depth            ; Tsunami flow_depth  // or depth?
+  vertical_evacuation?   ; True if pedestrian can evacuate vertically
 ]
 
 nodes-own[
@@ -58,11 +59,12 @@ pedestrians-own[
 
 
 globals [
-  config                      ; Configuration table readed from a JSON file
-  absolute_data_path          ; Data Path
-  absolute_output_path        ; Output Path
-  max_seconds                 ; Maximum seconds per simulation
-  urban_network_dataset       ; Urban network edges dataset
+  config                             ; Configuration table readed from a JSON file
+  absolute_data_path                 ; Data Path
+  absolute_output_path               ; Output Path
+  max_seconds                        ; Maximum seconds per simulation
+  urban_network_dataset              ; Urban network edges dataset
+  vertical_evacuation_mask_dataset   ; Area from where pedestrians can evacuate vertically
   node_dataset                ; Urban network nodes dataset
   shelter_dataset             ; Shelters dataset
   population_areas_dataset    ; Population areas dataset
@@ -80,13 +82,6 @@ globals [
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   meters_per_patch      ; Meters per patch
   seconds_per_tick      ; Seconds per tick
-
-  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-  ;;;;;;;;;;     DENSITY     ;;;;;;;;;;
-  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-  ;pedestrian_counting_radius  ; Radius for density counting
-  ;min_density_factor          ; Minimum density factor
-
   ;;;;;;;;;;;;
   ;; OTHERS ;;
   ;;;;;;;;;;;;
@@ -95,7 +90,6 @@ globals [
   shelters_agenset            ; Agenset of shelters
   nodes_id_table              ; Table where keys are OSM id from each node and value is the node itself
   pedestrian_status_list      ; For making output
-  aux
 ]
 
 
@@ -150,31 +144,36 @@ end
 to initial-values
   ; Initial values based on configuration file
   set absolute_data_path (word pathdir:get-model-path pathdir:get-separator data_path)
-  let config_filepath (word absolute_data_path pathdir:get-separator "config.json")
+  let config_filepath (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator tsunami_scenario pathdir:get-separator "config.json")
   set config (table:from-json-file config_filepath )
   set seconds_per_tick (table:get-or-default config "seconds_per_tick" 10)
   set max_seconds (table:get-or-default config "max_seconds" 3600)
   ; Tsunami inundation scale
-  set min_flow_depth (table:get config "min_flow_depth")
+  set min_flow_depth 0 ;
   set max_flow_depth (table:get config "max_flow_depth")
   ; Outputs
   set pedestrian_status_list (list ["moving" "evacuated" "dead"])
   ; Output prints
   output-print ( word "[data_path]: " absolute_data_path )
-  output-print ( word "[tsunami_flow_depth]: " tsunami_flow_depth )
   output-print ( word "[agent_distribution_type]: " population_scenario )
   output-print ( word "[evacuation_route_type]: " evacuation_route_type )
   output-print ( word "[flow_depth_threshold]: " flow_depth_threshold )
   output-print ( word "[evacuation_willingness_prob]: " evacuation_willingness_prob )
   output-print ( word "[vert_evacuation_willingness_prob]: " vert_evacuation_willingness_prob )
   output-print ( word "[confusion_ratio]: " confusion_ratio )
-  output-print ( word "[alternate_shelter_radius_meters]: " alternate_shelter_radius_meters )
+  output-print ( word "[alternate_shelter_radius_meters]: " alternative_shelter_radius_meters )
   output-print ( word "[config_filepath]: " config_filepath )
   output-print ( word "[seconds_per_tick]: " seconds_per_tick  )
   output-print ( word "[max_seconds]: " max_seconds )
   output-print ( word "[min_flow_depth]: " min_flow_depth )
   output-print ( word "[max_flow_depth]: " max_flow_depth )
-
+  ; Output folder
+  set absolute_output_path ( word absolute_data_path pathdir:get-separator "output" )
+  if behaviorspace-experiment-name != "" [
+    set absolute_output_path ( word absolute_output_path pathdir:get-separator behaviorspace-experiment-name pathdir:get-separator behaviorspace-run-number )
+  ]
+  if not pathdir:isDirectory? absolute_output_path [ pathdir:create absolute_output_path ]
+  output-print ( word "[absolute_output_path]: " absolute_output_path)
 
   output-print ( word date-and-time " - Initial values loaded" )
 end
@@ -184,10 +183,11 @@ to read-gis-files
   gis:load-coordinate-system (word absolute_data_path pathdir:get-separator "urban" pathdir:get-separator "urban_network.prj")
   set urban_network_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "urban" pathdir:get-separator "urban_network.shp")
   set node_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "urban" pathdir:get-separator "urban_nodes.shp")
+  set vertical_evacuation_mask_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "urban" pathdir:get-separator "vertical_evacuation_mask.shp")
   set shelter_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "shelters" pathdir:get-separator "shelters_node.shp")
   set population_areas_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "population" pathdir:get-separator population_scenario pathdir:get-separator "population_areas.shp")
-  set tsunami_sample_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator "0.asc")
-
+  set tsunami_sample_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator tsunami_scenario pathdir:get-separator "0.asc")
+  resize-world 0 gis:width-of tsunami_sample_dataset 0 gis:height-of tsunami_sample_dataset
   let world_envelope (
     gis:envelope-union-of
       (gis:envelope-of urban_network_dataset)
@@ -201,17 +201,18 @@ to read-gis-files
   let gis_world_width (item 1 world_envelope - item 0 world_envelope)                                     ; real world width in meters
   let gis_world_height (item 3 world_envelope - item 2 world_envelope)                                    ; real world height in meters
   set meters_per_patch max (list (gis_world_height / world-width) (gis_world_height / world-height))
-  ;set pedestrian_counting_radius (pedestrian_counting_radius_meters / meters_per_patch)
-  let reach_node_tolerance_meters (table:get-or-default config "reach_node_tolerance" 0.05)
-  set reach_node_tolerance (reach_node_tolerance_meters / meters_per_patch)
-  let min_density_factor_meters (table:get-or-default config "min_density_factor_meters" 0.1)
-  ;set min_density_factor (min_density_factor_meters / meters_per_patch)
-  set alternate_shelter_radius (alternate_shelter_radius_meters / meters_per_patch)
+  set reach_node_tolerance (0.1 / meters_per_patch)  ; 10 cm
+  set alternate_shelter_radius (alternative_shelter_radius_meters / meters_per_patch)
   ; Output printing
   output-print ( word "[meters_per_patch]: " meters_per_patch )
   output-print ( word "[reach_node_tolerance]: " reach_node_tolerance )
   output-print ( word "[alternate_shelter_radius]: " alternate_shelter_radius )
   output-print ( word date-and-time " - GIS files readed" )
+  ; Apply vertical evacuation property to patches
+  gis:apply-coverage vertical_evacuation_mask_dataset "VERT_EVAC" vertical_evacuation?
+  ask patches with [vertical_evacuation? = 1] [set vertical_evacuation? true]
+  gis:set-drawing-color 135
+  gis:draw vertical_evacuation_mask_dataset 5
 end
 
 
@@ -239,7 +240,7 @@ to load-shelters
       if id = i_shelter_id [
         set color green
         set shape "square"
-        set size 5
+        set size 12
         set shelter? true
         set evac_type ( gis:property-value i "evac_type" )
         set capacity 1000000  ; TODO
@@ -265,7 +266,7 @@ to load-roads
         set slope gis:property-value i "slope"
         set sidewalks gis:property-value i  "sidewalks"
         set sidewalk_width ((gis:property-value i "sd_width") / meters_per_patch)
-        ;set shape "line"
+        set thickness 1.5
       ]
     ]
   ]
@@ -315,30 +316,12 @@ to load-evacuation-routes
 end
 
 
-to load-tsunami-inundation
-  (
-    ifelse
-    tsunami_flow_depth = "continuous" [
-      output-print ( word  date-and-time " - Tsunami inundation raster will be loaded continuously in each tick")
-    ]
-    tsunami_flow_depth = "conservative" [
-      let tsunami_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator  "conservative_inundation.asc")
-      apply-tsunami-raster tsunami_dataset min_flow_depth max_flow_depth
-      output-print ( word  date-and-time " - Conservative Tsunami inundation Loaded")
-    ]
-    [output-print ( word  date-and-time " - WARNING: Tsunami flow depth type is not recognized" )]
-  )
-end
-
-
 to update-tsunami-inundation
   ; load tsunamis raster
-  if tsunami_flow_depth = "continuous" [
-    let seconds int(ticks * seconds_per_tick)
-    let tsunami_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator seconds ".asc")
-    ; gis:set-world-envelope (gis:envelope-of inundation)  ; check this!
-    apply-tsunami-raster tsunami_dataset min_flow_depth max_flow_depth
-    ]
+  let seconds int(ticks * seconds_per_tick)
+  let tsunami_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator tsunami_scenario pathdir:get-separator seconds ".asc")
+  ; gis:set-world-envelope (gis:envelope-of inundation)  ; check this!
+  apply-tsunami-raster tsunami_dataset min_flow_depth max_flow_depth
 end
 
 
@@ -363,8 +346,8 @@ to load-pedestrians
   let departure_time_mean (departure_time_mean_in_sec / seconds_per_tick)
   foreach gis:feature-list-of population_areas_dataset [ row ->
     let n gis:property-value row "population"
-    gis:create-turtles-inside-polygon row pedestrians (n / 50 ) [
-      set size 1.5
+    gis:create-turtles-inside-polygon row pedestrians (n / 100 ) [
+      set size 6
       set shape "circle"
       set age simulate-age
       set base_speed ( ( get-speed age ) * seconds_per_tick / meters_per_patch)
@@ -392,7 +375,7 @@ to make-evacuation-decision
     ifelse ( rnd_evacuation_willingness <= evacuation_willingness_prob )
     [
       let rnd_vert_evacuation_willingness random-float 1
-      ifelse ( rnd_vert_evacuation_willingness <= vert_evacuation_willingness_prob )
+      ifelse ( rnd_vert_evacuation_willingness <= vert_evacuation_willingness_prob and vertical_evacuation? = true)
       [
         set decision "vertical"
         set color orange
@@ -610,13 +593,6 @@ end
 
 
 to write-output
-  ; Write every output file
-  set absolute_output_path ( word absolute_data_path pathdir:get-separator "output" )
-  if behaviorspace-experiment-name != "" [
-    set absolute_output_path ( word absolute_output_path pathdir:get-separator behaviorspace-experiment-name pathdir:get-separator behaviorspace-run-number )
-  ]
-  if not pathdir:isDirectory? absolute_output_path [ pathdir:create absolute_output_path ]
-  output-print ( word "[absolute_output_path]: " absolute_output_path)
   ; Shelters output
   let shelter_evacuation_output (word absolute_output_path pathdir:get-separator "shelters_evacuation.csv")
   if file-exists? shelter_evacuation_output [ file-delete shelter_evacuation_output ]
@@ -693,7 +669,6 @@ to setup
   load-nodes
   load-shelters
   load-roads
-  load-tsunami-inundation
   load-evacuation-routes
   load-pedestrians
   output-print ( word date-and-time " - Setup has finalized succesfully" )
@@ -701,6 +676,7 @@ end
 
 
 to go
+  output-print ( word date-and-time " - Tick " ticks )
   update-tsunami-inundation
   update-dead-pedestrians
   start-to-evacuate
@@ -719,13 +695,13 @@ end
 GRAPHICS-WINDOW
 171
 10
-861
-701
+1028
+720
 -1
 -1
-3.393035
+1.0
 1
-10
+12
 1
 1
 1
@@ -733,10 +709,10 @@ GRAPHICS-WINDOW
 0
 0
 1
--100
-100
--100
-100
+0
+848
+0
+700
 0
 0
 1
@@ -778,10 +754,10 @@ NIL
 0
 
 PLOT
-887
-14
-1413
-250
+1133
+11
+1659
+247
 Pedestrians
 time
 total
@@ -853,21 +829,21 @@ vert_evacuation_willingness_prob
 Number
 
 INPUTBOX
-883
-450
-1038
-510
-alternate_shelter_radius_meters
+1129
+447
+1284
+507
+alternative_shelter_radius_meters
 500.0
 1
 0
 Number
 
 PLOT
-889
-269
-1413
-420
+1135
+266
+1659
+417
 Pedestrian speed
 time
 speed
@@ -880,16 +856,6 @@ false
 "" ""
 PENS
 "mean" 1.0 0 -16777216 true "" "plot mean [speed] of pedestrians with [moving?]"
-
-CHOOSER
-5
-127
-160
-172
-tsunami_flow_depth
-tsunami_flow_depth
-"continuous" "conservative"
-0
 
 CHOOSER
 3
@@ -921,6 +887,17 @@ departure_time_mean_in_sec
 1
 0
 Number
+
+INPUTBOX
+4
+123
+159
+183
+tsunami_scenario
+tsunami_1985
+1
+0
+String
 
 @#$#@#$#@
 ## WHAT IS IT?
@@ -1275,7 +1252,7 @@ NetLogo 6.2.1
     <metric>count pedestrians with [dead?]</metric>
     <metric>count pedestrians with [evacuated?]</metric>
     <enumeratedValueSet variable="data_path">
-      <value value="&quot;scenario_test&quot;"/>
+      <value value="&quot;vina_del_mar&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="flow_depth_threshold">
       <value value="0.1"/>
