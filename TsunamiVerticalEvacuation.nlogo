@@ -5,6 +5,7 @@ extensions [
   pathdir
   py
   table
+  profiler
 ]
 
 breed [ nodes node ]
@@ -346,9 +347,11 @@ to load-pedestrians
   let departure_time_mean (departure_time_mean_in_sec / seconds_per_tick)
   foreach gis:feature-list-of population_areas_dataset [ row ->
     let n gis:property-value row "population"
-    gis:create-turtles-inside-polygon row pedestrians (n / 100 ) [
+    gis:create-turtles-inside-polygon row pedestrians (n / 1 ) [  ; You can change this if you want to simulate with few pedestrians
       set size 6
       set shape "circle"
+      set init_x xcor
+      set init_y ycor
       set age simulate-age
       set base_speed ( ( get-speed age ) * seconds_per_tick / meters_per_patch)
       set depar_time ( (rayleigh-random departure_time_mean_in_sec) / seconds_per_tick )
@@ -388,7 +391,7 @@ to make-evacuation-decision
     [
       set decision "no"
       set color brown
-      set depar_time ( max_seconds / seconds_per_tick + 1 )  ; Inifinite departure time
+      set depar_time ( max_seconds / seconds_per_tick + 1 )  ; Infinite departure time
     ]
   ]
   output-print ( word date-and-time " - Pedestrians have made their evacuation decision" )
@@ -629,7 +632,7 @@ to write-output
     ]
     [
       (list
-        id
+        who
         decision
         init_x
         init_y
@@ -648,7 +651,7 @@ to write-output
   csv:to-file pedestrian_output pedestrian_output_list
   output-print (word date-and-time " - Pedestrian output has been successfully written" )
   ; Simulation Output
-  output-print (word date-and-time " - Simulation has finalized and it took " timer " seconds.")
+  output-print (word date-and-time " - Simulation has finalized and it took " timer " seconds (" (precision (timer / 60) 3 ) " minutes).")
   let simulation_output (word absolute_output_path pathdir:get-separator "scenario_output.txt")
   if file-exists? simulation_output [ file-delete simulation_output ]
   export-output simulation_output
@@ -690,6 +693,16 @@ to go
     stop
    ]
   tick
+end
+
+
+to profile
+  setup                                          ;; set up the model
+  profiler:start                                 ;; start profiling
+  repeat (max_seconds / seconds_per_tick + 1) [ go ]                              ;; run something you want to measure
+  profiler:stop                                  ;; stop profiling
+  csv:to-file "tve_profiler_data.csv" profiler:data  ;; save the results
+  profiler:reset                                 ;; clear the data
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
@@ -812,7 +825,7 @@ INPUTBOX
 161
 442
 evacuation_willingness_prob
-0.9
+1.0
 1
 0
 Number
@@ -823,7 +836,7 @@ INPUTBOX
 161
 521
 vert_evacuation_willingness_prob
-0.1
+0.0
 1
 0
 Number
@@ -865,7 +878,7 @@ CHOOSER
 population_scenario
 population_scenario
 "daytime" "nighttime"
-0
+1
 
 CHOOSER
 5
@@ -898,6 +911,23 @@ tsunami_1985
 1
 0
 String
+
+BUTTON
+1580
+650
+1646
+683
+NIL
+profile
+NIL
+1
+T
+OBSERVER
+NIL
+NIL
+NIL
+NIL
+1
 
 @#$#@#$#@
 ## WHAT IS IT?
@@ -1241,25 +1271,92 @@ false
 Polygon -7500403 true true 270 75 225 30 30 225 75 270
 Polygon -7500403 true true 30 75 75 30 270 225 225 270
 @#$#@#$#@
-NetLogo 6.2.1
+NetLogo 6.2.2
 @#$#@#$#@
 @#$#@#$#@
 @#$#@#$#@
 <experiments>
-  <experiment name="test_experiment" repetitions="1" runMetricsEveryStep="true">
+  <experiment name="vina_de_mar_horizontal" repetitions="10" runMetricsEveryStep="true">
     <setup>setup</setup>
     <go>go</go>
+    <metric>count pedestrians with [moving?]</metric>
     <metric>count pedestrians with [dead?]</metric>
     <metric>count pedestrians with [evacuated?]</metric>
     <enumeratedValueSet variable="data_path">
       <value value="&quot;vina_del_mar&quot;"/>
     </enumeratedValueSet>
+    <enumeratedValueSet variable="tsunami_scenario">
+      <value value="&quot;tsunami_1985&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="population_scenario">
+      <value value="&quot;daytime&quot;"/>
+      <value value="&quot;nighttime&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_route_type">
+      <value value="&quot;shortest&quot;"/>
+    </enumeratedValueSet>
     <enumeratedValueSet variable="flow_depth_threshold">
       <value value="0.1"/>
-      <value value="0.2"/>
-      <value value="0.3"/>
-      <value value="0.4"/>
       <value value="0.5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_willingness_prob">
+      <value value="1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="vert_evacuation_willingness_prob">
+      <value value="0"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="confusion_ratio">
+      <value value="0.1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="departure_time_mean_in_sec">
+      <value value="180"/>
+      <value value="480"/>
+      <value value="660"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="alternative_shelter_radius_meters">
+      <value value="500"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="vina_de_mar_vertical" repetitions="10" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metric>count pedestrians with [moving?]</metric>
+    <metric>count pedestrians with [dead?]</metric>
+    <metric>count pedestrians with [evacuated?]</metric>
+    <enumeratedValueSet variable="data_path">
+      <value value="&quot;vina_del_mar&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="tsunami_scenario">
+      <value value="&quot;tsunami_1985&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="population_scenario">
+      <value value="&quot;daytime&quot;"/>
+      <value value="&quot;nighttime&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_route_type">
+      <value value="&quot;shortest&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="flow_depth_threshold">
+      <value value="0.1"/>
+      <value value="0.5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_willingness_prob">
+      <value value="1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="vert_evacuation_willingness_prob">
+      <value value="0.25"/>
+      <value value="0.75"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="confusion_ratio">
+      <value value="0.1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="departure_time_mean_in_sec">
+      <value value="180"/>
+      <value value="480"/>
+      <value value="660"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="alternative_shelter_radius_meters">
+      <value value="500"/>
     </enumeratedValueSet>
   </experiment>
 </experiments>
