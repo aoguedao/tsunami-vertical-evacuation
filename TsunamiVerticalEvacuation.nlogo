@@ -5,7 +5,7 @@ extensions [
   pathdir
   py
   table
-  profiler
+  ; profiler
 ]
 
 breed [ nodes node ]
@@ -696,14 +696,14 @@ to go
 end
 
 
-to profile
-  setup                                          ;; set up the model
-  profiler:start                                 ;; start profiling
-  repeat (max_seconds / seconds_per_tick + 1) [ go ]                              ;; run something you want to measure
-  profiler:stop                                  ;; stop profiling
-  csv:to-file "tve_profiler_data.csv" profiler:data  ;; save the results
-  profiler:reset                                 ;; clear the data
-end
+;to profile
+;  setup                                          ;; set up the model
+;  profiler:start                                 ;; start profiling
+;  repeat (max_seconds / seconds_per_tick + 1) [ go ]                              ;; run something you want to measure
+;  profiler:stop                                  ;; stop profiling
+;  csv:to-file "tve_profiler_data.csv" profiler:data  ;; save the results
+;  profiler:reset                                 ;; clear the data
+;end
 @#$#@#$#@
 GRAPHICS-WINDOW
 171
@@ -911,23 +911,6 @@ tsunami_1985
 1
 0
 String
-
-BUTTON
-1580
-650
-1646
-683
-NIL
-profile
-NIL
-1
-T
-OBSERVER
-NIL
-NIL
-NIL
-NIL
-1
 
 @#$#@#$#@
 ## WHAT IS IT?
@@ -1271,7 +1254,7 @@ false
 Polygon -7500403 true true 270 75 225 30 30 225 75 270
 Polygon -7500403 true true 30 75 75 30 270 225 225 270
 @#$#@#$#@
-NetLogo 6.2.2
+NetLogo 6.2.1
 @#$#@#$#@
 @#$#@#$#@
 @#$#@#$#@
@@ -1354,6 +1337,45 @@ NetLogo 6.2.2
       <value value="180"/>
       <value value="480"/>
       <value value="660"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="alternative_shelter_radius_meters">
+      <value value="500"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="vina_de_mar_test" repetitions="2" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metric>count pedestrians with [moving?]</metric>
+    <metric>count pedestrians with [dead?]</metric>
+    <metric>count pedestrians with [evacuated?]</metric>
+    <enumeratedValueSet variable="data_path">
+      <value value="&quot;vina_del_mar&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="tsunami_scenario">
+      <value value="&quot;tsunami_1985&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="population_scenario">
+      <value value="&quot;daytime&quot;"/>
+      <value value="&quot;nighttime&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_route_type">
+      <value value="&quot;shortest&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="flow_depth_threshold">
+      <value value="0.1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_willingness_prob">
+      <value value="1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="vert_evacuation_willingness_prob">
+      <value value="0.25"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="confusion_ratio">
+      <value value="0.1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="departure_time_mean_in_sec">
+      <value value="180"/>
+      <value value="540"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="alternative_shelter_radius_meters">
       <value value="500"/>
