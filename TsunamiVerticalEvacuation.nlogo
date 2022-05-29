@@ -1259,7 +1259,7 @@ NetLogo 6.2.1
 @#$#@#$#@
 @#$#@#$#@
 <experiments>
-  <experiment name="vina_de_mar_horizontal" repetitions="10" runMetricsEveryStep="true">
+  <experiment name="vina_del_mar_horizontal" repetitions="10" runMetricsEveryStep="true">
     <setup>setup</setup>
     <go>go</go>
     <metric>count pedestrians with [moving?]</metric>
@@ -1300,7 +1300,7 @@ NetLogo 6.2.1
       <value value="500"/>
     </enumeratedValueSet>
   </experiment>
-  <experiment name="vina_de_mar_vertical" repetitions="10" runMetricsEveryStep="true">
+  <experiment name="vina_del_mar_vertical" repetitions="10" runMetricsEveryStep="true">
     <setup>setup</setup>
     <go>go</go>
     <metric>count pedestrians with [moving?]</metric>
@@ -1342,7 +1342,7 @@ NetLogo 6.2.1
       <value value="500"/>
     </enumeratedValueSet>
   </experiment>
-  <experiment name="vina_de_mar_test" repetitions="2" runMetricsEveryStep="true">
+  <experiment name="vina_del_mar_test" repetitions="2" runMetricsEveryStep="true">
     <setup>setup</setup>
     <go>go</go>
     <metric>count pedestrians with [moving?]</metric>
@@ -1376,6 +1376,243 @@ NetLogo 6.2.1
     <enumeratedValueSet variable="departure_time_mean_in_sec">
       <value value="180"/>
       <value value="540"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="alternative_shelter_radius_meters">
+      <value value="500"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="vina_del_mar_vertical_dt180" repetitions="10" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metric>count pedestrians with [moving?]</metric>
+    <metric>count pedestrians with [dead?]</metric>
+    <metric>count pedestrians with [evacuated?]</metric>
+    <enumeratedValueSet variable="data_path">
+      <value value="&quot;vina_del_mar&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="tsunami_scenario">
+      <value value="&quot;tsunami_1985&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="population_scenario">
+      <value value="&quot;daytime&quot;"/>
+      <value value="&quot;nighttime&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_route_type">
+      <value value="&quot;shortest&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="flow_depth_threshold">
+      <value value="0.1"/>
+      <value value="0.5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_willingness_prob">
+      <value value="1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="vert_evacuation_willingness_prob">
+      <value value="0.25"/>
+      <value value="0.75"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="confusion_ratio">
+      <value value="0.1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="departure_time_mean_in_sec">
+      <value value="180"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="alternative_shelter_radius_meters">
+      <value value="500"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="vina_del_mar_vertical_dt480" repetitions="10" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metric>count pedestrians with [moving?]</metric>
+    <metric>count pedestrians with [dead?]</metric>
+    <metric>count pedestrians with [evacuated?]</metric>
+    <enumeratedValueSet variable="data_path">
+      <value value="&quot;vina_del_mar&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="tsunami_scenario">
+      <value value="&quot;tsunami_1985&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="population_scenario">
+      <value value="&quot;daytime&quot;"/>
+      <value value="&quot;nighttime&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_route_type">
+      <value value="&quot;shortest&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="flow_depth_threshold">
+      <value value="0.1"/>
+      <value value="0.5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_willingness_prob">
+      <value value="1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="vert_evacuation_willingness_prob">
+      <value value="0.25"/>
+      <value value="0.75"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="confusion_ratio">
+      <value value="0.1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="departure_time_mean_in_sec">
+      <value value="480"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="alternative_shelter_radius_meters">
+      <value value="500"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="vina_del_mar_vertical_dt660" repetitions="10" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metric>count pedestrians with [moving?]</metric>
+    <metric>count pedestrians with [dead?]</metric>
+    <metric>count pedestrians with [evacuated?]</metric>
+    <enumeratedValueSet variable="data_path">
+      <value value="&quot;vina_del_mar&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="tsunami_scenario">
+      <value value="&quot;tsunami_1985&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="population_scenario">
+      <value value="&quot;daytime&quot;"/>
+      <value value="&quot;nighttime&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_route_type">
+      <value value="&quot;shortest&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="flow_depth_threshold">
+      <value value="0.1"/>
+      <value value="0.5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_willingness_prob">
+      <value value="1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="vert_evacuation_willingness_prob">
+      <value value="0.25"/>
+      <value value="0.75"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="confusion_ratio">
+      <value value="0.1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="departure_time_mean_in_sec">
+      <value value="660"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="alternative_shelter_radius_meters">
+      <value value="500"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="vina_del_mar_horizontal_dt180" repetitions="10" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metric>count pedestrians with [moving?]</metric>
+    <metric>count pedestrians with [dead?]</metric>
+    <metric>count pedestrians with [evacuated?]</metric>
+    <enumeratedValueSet variable="data_path">
+      <value value="&quot;vina_del_mar&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="tsunami_scenario">
+      <value value="&quot;tsunami_1985&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="population_scenario">
+      <value value="&quot;daytime&quot;"/>
+      <value value="&quot;nighttime&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_route_type">
+      <value value="&quot;shortest&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="flow_depth_threshold">
+      <value value="0.1"/>
+      <value value="0.5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_willingness_prob">
+      <value value="1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="vert_evacuation_willingness_prob">
+      <value value="0"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="confusion_ratio">
+      <value value="0.1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="departure_time_mean_in_sec">
+      <value value="180"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="alternative_shelter_radius_meters">
+      <value value="500"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="vina_del_mar_horizontal_dt480" repetitions="10" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metric>count pedestrians with [moving?]</metric>
+    <metric>count pedestrians with [dead?]</metric>
+    <metric>count pedestrians with [evacuated?]</metric>
+    <enumeratedValueSet variable="data_path">
+      <value value="&quot;vina_del_mar&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="tsunami_scenario">
+      <value value="&quot;tsunami_1985&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="population_scenario">
+      <value value="&quot;daytime&quot;"/>
+      <value value="&quot;nighttime&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_route_type">
+      <value value="&quot;shortest&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="flow_depth_threshold">
+      <value value="0.1"/>
+      <value value="0.5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_willingness_prob">
+      <value value="1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="vert_evacuation_willingness_prob">
+      <value value="0"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="confusion_ratio">
+      <value value="0.1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="departure_time_mean_in_sec">
+      <value value="480"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="alternative_shelter_radius_meters">
+      <value value="500"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="vina_del_mar_horizontal_dt660" repetitions="10" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metric>count pedestrians with [moving?]</metric>
+    <metric>count pedestrians with [dead?]</metric>
+    <metric>count pedestrians with [evacuated?]</metric>
+    <enumeratedValueSet variable="data_path">
+      <value value="&quot;vina_del_mar&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="tsunami_scenario">
+      <value value="&quot;tsunami_1985&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="population_scenario">
+      <value value="&quot;daytime&quot;"/>
+      <value value="&quot;nighttime&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_route_type">
+      <value value="&quot;shortest&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="flow_depth_threshold">
+      <value value="0.1"/>
+      <value value="0.5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_willingness_prob">
+      <value value="1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="vert_evacuation_willingness_prob">
+      <value value="0"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="confusion_ratio">
+      <value value="0.1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="departure_time_mean_in_sec">
+      <value value="660"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="alternative_shelter_radius_meters">
       <value value="500"/>
