@@ -147,10 +147,10 @@ to initial-values
   set absolute_data_path (word pathdir:get-model-path pathdir:get-separator data_path)
   let config_filepath (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator tsunami_scenario pathdir:get-separator "config.json")
   set config (table:from-json-file config_filepath )
-  set seconds_per_tick (table:get-or-default config "seconds_per_tick" 10)
-  set max_seconds (table:get-or-default config "max_seconds" 3600)
+  set seconds_per_tick (table:get config "seconds_per_tick")
+  set max_seconds (table:get config "max_seconds")
   ; Tsunami inundation scale
-  set min_flow_depth 0 ;
+  set min_flow_depth (table:get config "min_flow_depth") ;
   set max_flow_depth (table:get config "max_flow_depth")
   ; Outputs
   set pedestrian_status_list (list ["moving" "evacuated" "dead"])
@@ -243,8 +243,8 @@ to load-shelters
         set shape "square"
         set size 12
         set shelter? true
+        set capacity ( gis:property-value i "capacity" )
         set evac_type ( gis:property-value i "evac_type" )
-        set capacity 1000000  ; TODO
         set evacuee_count 0
         set evacuee_count_list []
       ]
@@ -347,7 +347,7 @@ to load-pedestrians
   let departure_time_mean (departure_time_mean_in_sec / seconds_per_tick)
   foreach gis:feature-list-of population_areas_dataset [ row ->
     let n gis:property-value row "population"
-    gis:create-turtles-inside-polygon row pedestrians (n / 1 ) [  ; You can change this if you want to simulate with few pedestrians
+    gis:create-turtles-inside-polygon row pedestrians (n / 100 ) [  ; You can change this if you want to simulate with few pedestrians
       set size 6
       set shape "circle"
       set init_x xcor
@@ -825,7 +825,7 @@ INPUTBOX
 161
 442
 evacuation_willingness_prob
-1.0
+0.9
 1
 0
 Number
@@ -836,7 +836,7 @@ INPUTBOX
 161
 521
 vert_evacuation_willingness_prob
-0.0
+0.75
 1
 0
 Number
