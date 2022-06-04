@@ -14,7 +14,8 @@ directed-link-breed [ roads road ]
 
 patches-own [
   flow_depth            ; Tsunami flow_depth  // or depth?
-  vertical_evacuation?   ; True if pedestrian can evacuate vertically
+  vertical_evacuation?  ; True if pedestrian can evacuate vertically
+  init_pedestrians      ; Number of initial pedestrian on each patch
 ]
 
 nodes-own[
@@ -34,7 +35,6 @@ roads-own [
 ]
 
 pedestrians-own[
-  id                  ; Pedestrian id
   init_x              ; Initial position
   init_y              ; Initial position
   age                 ; Age
@@ -43,6 +43,7 @@ pedestrians-own[
   speed               ; Current speed
   slope_factor        ; Slope factor for modifiying pedestrian speed
   decision            ; "horizontal": Horizontal, "ver": Vertical or "no": Not willing to evacuate
+  init_decision       ; Initial decision, for statistics purposes
   route               ; List of "who" from nodes remaining to reach the shelter
   goal_shelter_id     ; Goal shelter OSM id of their evacuation route
   current_node        ; Current node of their evacuation route
@@ -145,7 +146,15 @@ end
 to initial-values
   ; Initial values based on configuration file
   set absolute_data_path (word pathdir:get-model-path pathdir:get-separator data_path)
-  let config_filepath (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator tsunami_scenario pathdir:get-separator "config.json")
+  let config_filepath (word
+    absolute_data_path
+    pathdir:get-separator
+    "tsunami_inundation"
+    pathdir:get-separator
+    tsunami_scenario
+    pathdir:get-separator
+    "config.json"
+  )
   set config (table:from-json-file config_filepath )
   set seconds_per_tick (table:get config "seconds_per_tick")
   set max_seconds (table:get config "max_seconds")
@@ -310,28 +319,48 @@ to load-evacuation-routes
     table:put horizontal_routes (who) (map get-who-node table:get horizontal_routes_tmp (word id))
     table:put vertical_routes (who) (map get-who-node table:get vertical_routes_tmp (word id))
   ]
-  ask shelters_agenset [
-    table:put alternative_shelter_routes (who) (map get-who-node table:get alternative_shelter_routes_tmp (word id))
+  ask shelters_agenset with [evac_type = "vertical"][
+    let origin_who who
+    let origin_id id
+    foreach [self] of shelters_agenset with [( evac_type = "vertical" ) and ( who != origin_who )] [ target_shelter ->
+      let target_who ( [who] of target_shelter )
+      let target_id ( [id] of target_shelter )
+      let origin_target_who ( word origin_who "&" target_who )
+      let origin_target_id ( word origin_id "&" target_id )
+      table:put alternative_shelter_routes (origin_target_who) (map get-who-node table:get alternative_shelter_routes_tmp origin_target_id )
+    ]
   ]
   output-print ( word date-and-time " - Evacuation Routes Loaded" )
 end
 
 
 to update-tsunami-inundation
-  ; load tsunamis raster
+  ; Load tsunamis raster
   let seconds int(ticks * seconds_per_tick)
-  let tsunami_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator tsunami_scenario pathdir:get-separator seconds ".asc")
-  ; gis:set-world-envelope (gis:envelope-of inundation)  ; check this!
-  apply-tsunami-raster tsunami_dataset min_flow_depth max_flow_depth
-end
-
-
-to apply-tsunami-raster [tsunami min_depth max_depth]
-  gis:apply-raster tsunami flow_depth
-  ; ask patches with [flow_depth = -9999][set flow_depth 0]  ; TODO: change -9999
+  let tsunami_dataset gis:load-dataset ( word
+    absolute_data_path
+    pathdir:get-separator
+    "tsunami_inundation"
+    pathdir:get-separator
+    tsunami_scenario
+    pathdir:get-separator
+    seconds
+    ".asc"
+  )
+  ; Apply tsunami raster to flow_depth property
+  gis:apply-raster tsunami_dataset flow_depth
   ask patches with [not ((flow_depth <= 0) or (flow_depth >= 0))][set flow_depth 0]
-  ask patches [ set pcolor scale-color blue flow_depth min_depth max_depth ]
+  ask patches [ set pcolor scale-color blue flow_depth 0 max_flow_depth ]
+  ;apply-tsunami-raster tsunami_dataset min_flow_depth max_flow_depth
 end
+
+
+;to apply-tsunami-raster [tsunami min_depth max_depth]
+;  gis:apply-raster tsunami flow_depth
+;  ; ask patches with [flow_depth = -9999][set flow_depth 0]  ; TODO: change -9999
+;  ask patches with [not ((flow_depth <= 0) or (flow_depth >= 0))][set flow_depth 0]
+;  ask patches [ set pcolor scale-color blue flow_depth min_depth max_depth ]
+;end
 
 
 to load-pedestrians
@@ -347,7 +376,7 @@ to load-pedestrians
   let departure_time_mean (departure_time_mean_in_sec / seconds_per_tick)
   foreach gis:feature-list-of population_areas_dataset [ row ->
     let n gis:property-value row "population"
-    gis:create-turtles-inside-polygon row pedestrians (n / 100 ) [  ; You can change this if you want to simulate with few pedestrians
+    gis:create-turtles-inside-polygon row pedestrians (n / 50 ) [  ; You can change this if you want to simulate with few pedestrians
       set size 6
       set shape "circle"
       set init_x xcor
@@ -368,17 +397,18 @@ to load-pedestrians
     ]
   ]
   make-evacuation-decision
+  ask patches [set init_pedestrians (count turtles-here)]  ; Initial count of pedestrians in each patch
   output-print ( word date-and-time " - Pedestrians Loaded" )
 end
 
 
 to make-evacuation-decision
   ask pedestrians [
-    let rnd_evacuation_willingness random-float 1
+    let rnd_evacuation_willingness random-float 1  ; Random number for evacuation willigness
     ifelse ( rnd_evacuation_willingness <= evacuation_willingness_prob )
     [
-      let rnd_vert_evacuation_willingness random-float 1
-      ifelse ( rnd_vert_evacuation_willingness <= vert_evacuation_willingness_prob and vertical_evacuation? = true)
+      let rnd_vert_evacuation_willingness random-float 1  ; Random number for vertical evacuation
+      ifelse ( ( rnd_vert_evacuation_willingness <= vert_evacuation_willingness_prob ) and ( vertical_evacuation? = true ) )
       [
         set decision "vertical"
         set color orange
@@ -393,6 +423,7 @@ to make-evacuation-decision
       set color brown
       set depar_time ( max_seconds / seconds_per_tick + 1 )  ; Infinite departure time
     ]
+    set init_decision decision
   ]
   output-print ( word date-and-time " - Pedestrians have made their evacuation decision" )
 end
@@ -407,7 +438,7 @@ to start-to-evacuate
       set goal_shelter_id (last route )
       set started? true
       set moving? true
-      set in_node? true  ; dummy node in order to start evacuation
+      set in_node? true  ; Dummy node in order to start evacuation
   ]
 end
 
@@ -428,16 +459,17 @@ end
 
 
 to set-next-node
-  let rnd_confusion_ratio random-float 1
-  ifelse ( rnd_confusion_ratio >= confusion_ratio or current_node = nobody)
+  let rnd_confusion_ratio random-float 1  ; Random number for taking a wrong route
+  ifelse ( ( rnd_confusion_ratio >= confusion_ratio ) or ( current_node = nobody ) )
   [
     set next_node ( node first route )
     set route ( but-first route )
   ]
   [
-    set next_node one-of [out-road-neighbors] of current_node
+    set next_node one-of [out-road-neighbors] of current_node  ; Pick a random neighbord node
     set route ( get-route next_node decision )
-  ]  ; pedestrian picks any road
+    set goal_shelter_id (last route )
+  ]
 end
 
 
@@ -473,15 +505,17 @@ end
 
 to update-slope-factor
   ; Update slope factor according to road slope
+  ; TODO: SOURCE
   if current_road != nobody [
     let slope_road ( [slope] of current_road )
-    set slope_factor (exp(-3.5 * abs(slope_road + 0.05) + 0.175))
+    set slope_factor ( exp( -3.5 * abs( slope_road + 0.05 ) + 0.175 ) )
   ]
 end
 
 
 to update-speed
   ; Get pedestrian density
+  ; TODO: SOURCE
   ask pedestrians with [moving? and not in_node?][
     let slope_speed ( base_speed * slope_factor )
     let max_distance_to_move min (list slope_speed (distance next_node))
@@ -499,15 +533,16 @@ to update-speed
     )
     let current_width ifelse-value (current_road != nobody)
     [[sidewalk_width] of current_road]
-    [ 2 / meters_per_patch]  ; when pedestrian is not walking over a sidewalk
+    [ 3 / meters_per_patch]  ; When pedestrian is not walking over a sidewalk
     let pedestrian_density (n_pedestrians_ahead / (current_width * max_distance_to_move))
-    set speed (goto-speed-density slope_speed pedestrian_density )
+    set speed (speed-density slope_speed pedestrian_density )
   ]
 end
 
 
-to-report goto-speed-density [speed_p density_p]
-  ; Goto speed density curve
+to-report speed-density [speed_p density_p]
+  ; Speed density curve
+  ; Source: Goto
   let s ( speed_p * meters_per_patch / seconds_per_tick )
   let p ( density_p / meters_per_patch ^ 2 )
   let threshold ( 1 - 0.343347 * (s - 1.5) )
@@ -529,7 +564,7 @@ to check-reach-node
     set current_node next_node
     set total_distance (total_distance + distance_to_next_node)
     ; Check if next node is a shelter
-    if ( [shelter?] of current_node ) [
+    if ( [shelter?] of current_node) and ( ( [who] of current_node ) = goal_shelter_id )[
       ; Check if shelter is full
       ifelse ( [evacuee_count < capacity] of current_node ) [ mark-evacuated ][ alternate-route ]
     ]
@@ -549,17 +584,42 @@ end
 
 
 to alternate-route
-  ; Look for an alternative route
-  let shelters_in_radius ( nodes with [shelter?] in-radius alternate_shelter_radius )
-  let horizontal_shelters_in_radius ( shelters_in_radius with [evac_type = "horizontal"] )
+  ; TODO: MUCHO TRABAJO AQUI
+  ; Look for an alternative route.
+  ; The pedestrian will try to go to a horizontal shelter if there is any close to them,
+  ; if not, it will go to another vertical shelter.
+  let who_current_shelter ( [who] of current_node)
+  print ( word "pedestrian " ( [who] of self ) " reached node " who_current_shelter)
+  let vertical_shelters_in_radius ( nodes with [shelter? and evac_type = "vertical" and ( who != who_current_shelter )] in-radius alternate_shelter_radius )
+  let horizontal_shelters_in_radius ( nodes with [shelter? and evac_type = "horizontal"] in-radius alternate_shelter_radius )
   ifelse ( any? horizontal_shelters_in_radius ) [
-    set route ( table:get alternative_shelter_routes [who] of (one-of horizontal_shelters_in_radius) )
-    print "Routing to horizontal shelter"
+    print (word "horizontal_shelters " horizontal_shelters_in_radius )
+    print (one-of horizontal_shelters_in_radius )
+    print ([who] of current_node )
+    set decision "horizontal"
+    set color yellow
+    set route ( table:get horizontal_routes ( [who] of current_node) )
+    print "Routing to a close horizontal shelter"
+
+    print ( word "new route (len " length(route) ") : " route )
   ]
   [
-    set route ( table:get alternative_shelter_routes [who] of (one-of shelters_in_radius) )
-    print "Routing to another vertical shelter"
+    ifelse ( any? vertical_shelters_in_radius) [
+      let random_vertical_shelter ( [who] of (one-of vertical_shelters_in_radius) )
+      let route_key ( word ( [who] of current_node ) "&" random_vertical_shelter )
+      set route ( table:get alternative_shelter_routes route_key )
+      print "Routing to another vertical shelter"
+    ][
+      set decision "horizontal"
+      set color yellow
+      set route ( table:get horizontal_routes ( [who] of current_node) )
+      print "Routing to closest horizontal shelter"
+      print ( word "new route (len " length(route) ") : " route )
+    ]
   ]
+  set goal_shelter_id (last route )
+
+;  wait 5  ; erase after debuging
 end
 
 
@@ -616,6 +676,7 @@ to write-output
     [
       [
         "id"
+        "init_decision"
         "decision"
         "init_x"
         "init_y"
@@ -633,6 +694,7 @@ to write-output
     [
       (list
         who
+        init_decision
         decision
         init_x
         init_y
@@ -650,6 +712,17 @@ to write-output
   )
   csv:to-file pedestrian_output pedestrian_output_list
   output-print (word date-and-time " - Pedestrian output has been successfully written" )
+  ; Patches as raster
+  let patch_dataset (gis:patch-dataset init_pedestrians)
+  let patch_output (word absolute_output_path pathdir:get-separator "initial_population_distribution")
+  if file-exists? patch_output [ file-delete patch_output ]
+  gis:store-dataset patch_dataset patch_output
+  output-print (word date-and-time " - Initial pedestrian distribution output has been successfully written" )
+  ; World Output
+  let world_output (word absolute_output_path pathdir:get-separator "world_output.csv")
+  if file-exists? world_output [ file-delete world_output ]
+  export-world world_output
+  output-print (word date-and-time " - NetLogo world has been successfully written" )
   ; Simulation Output
   output-print (word date-and-time " - Simulation has finalized and it took " timer " seconds (" (precision (timer / 60) 3 ) " minutes).")
   let simulation_output (word absolute_output_path pathdir:get-separator "scenario_output.txt")
@@ -679,7 +752,12 @@ end
 
 
 to go
-  output-print ( word date-and-time " - Tick " ticks )
+  ifelse behaviorspace-experiment-name = "" [
+    output-print ( word date-and-time " - Tick " ticks )
+  ][
+    output-print ( word date-and-time " - Run " behaviorspace-run-number " - Tick " ticks)
+
+  ]
   update-tsunami-inundation
   update-dead-pedestrians
   start-to-evacuate
@@ -697,18 +775,18 @@ end
 
 
 ;to profile
-;  setup                                          ;; set up the model
-;  profiler:start                                 ;; start profiling
-;  repeat (max_seconds / seconds_per_tick + 1) [ go ]                              ;; run something you want to measure
-;  profiler:stop                                  ;; stop profiling
-;  csv:to-file "tve_profiler_data.csv" profiler:data  ;; save the results
-;  profiler:reset                                 ;; clear the data
+;  setup                                                ; set up the model
+;  profiler:start                                       ; start profiling
+;  repeat (max_seconds / seconds_per_tick + 1) [ go ]   ; run something you want to measure
+;  profiler:stop                                        ; stop profiling
+;  csv:to-file "tve_profiler_data.csv" profiler:data    ; save the results
+;  profiler:reset                                       ; clear the data
 ;end
 @#$#@#$#@
 GRAPHICS-WINDOW
-171
+170
 10
-1028
+1027
 720
 -1
 -1
@@ -836,7 +914,7 @@ INPUTBOX
 161
 521
 vert_evacuation_willingness_prob
-0.75
+1.0
 1
 0
 Number
