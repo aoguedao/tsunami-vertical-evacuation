@@ -67,51 +67,54 @@ globals [
   max_seconds                        ; Maximum seconds per simulation
   urban_network_dataset              ; Urban network edges dataset
   vertical_evacuation_mask_dataset   ; Area from where pedestrians can evacuate vertically
-  node_dataset                ; Urban network nodes dataset
-  shelter_dataset             ; Shelters dataset
-  population_areas_dataset    ; Population areas dataset
-  horizontal_routes           ; List of horizontal routes for each node
-  vertical_routes             ; List of vertical routes for each node
-  alternative_shelter_routes  ; List routes for each shelter
-  tsunami_sample_dataset      ; Sample tsunami inundation raster dataset
-  min_flow_depth              ; Minimum flow depth for tsunami color palette
-  max_flow_depth              ; Maximum flow depth for tsunami color palette
-  speed_age_table
-  population_age_table
-  population_age_cdf
+  node_dataset                       ; Urban network nodes dataset
+  shelter_dataset                    ; Shelters dataset
+  population_areas_dataset           ; Population areas dataset
+  horizontal_routes                  ; List of horizontal routes for each node
+  vertical_routes                    ; List of vertical routes for each node
+  alternative_shelter_routes         ; List routes for each shelter
+  tsunami_sample_dataset             ; Sample tsunami inundation raster dataset
+  min_flow_depth                     ; Minimum flow depth for tsunami color palette
+  max_flow_depth                     ; Maximum flow depth for tsunami color palette
+  speed_age_table                    ; Speed-Age relationship for pedestrians
+  population_age_table               ; Population-Age table of pedestrian
+  population_age_cdf                 ; Cumulative density function of pedestrians
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;;;;;;;;; CONVERSION RATIOS ;;;;;;;;;
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-  meters_per_patch      ; Meters per patch
-  seconds_per_tick      ; Seconds per tick
+  meters_per_patch                   ; Meters per patch
+  seconds_per_tick                   ; Seconds per tick
   ;;;;;;;;;;;;
   ;; OTHERS ;;
   ;;;;;;;;;;;;
-  reach_node_tolerance        ; Float point tolerance for arriving at nodes
-  alternate_shelter_radius    ; For looking another route
-  shelters_agenset            ; Agenset of shelters
-  nodes_id_table              ; Table where keys are OSM id from each node and value is the node itself
-  pedestrian_status_list      ; For making output
+  shelters_agenset                   ; Agenset of shelters (nodes with property shelte? true)
+  nodes_id_table                     ; Table where keys are OSM id (or any other id) from each node and value is the node itself
+  pedestrian_status_list             ; For making output of pedestrian status in each tick
+  reach_node_tolerance               ; Float point tolerance for arriving at nodes
+  alternate_shelter_radius           ; For looking an alternative route if vertical shelters are full
 ]
 
 
 to-report get-node [node_id]
-  ; Return node (turtle) based on node id
+  ; Return node (turtle) based on node id (from dataset).
   report table:get-or-default nodes_id_table node_id nobody
 end
 
 
 to-report get-who-node [node_id]
+  ; Return "who" id based on node id (from dataset).
   report [who] of table:get-or-default nodes_id_table node_id nobody
 end
 
 
 to-report rayleigh-random [sigma]
+  ; Return a Rayleigh distribution value based on parameter sigma.
   report sqrt((- ln(1 - random-float 1 ))*(2 *(sigma ^ 2)))
 end
 
 
 to make-age-population-cdf
+  ; Cumulative distribution function of population by age.
   set population_age_cdf table:make
   table:remove population_age_table "age"
   let total_population ( sum(table:values population_age_table) )
@@ -127,12 +130,14 @@ end
 
 
 to-report simulate-age
+  ; Return age based on the cumulative distribution function.
   let u random-float 1
   report table:get population_age_cdf min(filter [ i -> i >= u ] table:keys population_age_cdf)
 end
 
 
 to-report get-speed [pedestrian_age]
+  ; Return pedestrian speed according to their age.
   (
     ifelse
     (pedestrian_age <= 5)  [ report table:get speed_age_table 5 ]
@@ -158,11 +163,9 @@ to initial-values
   set config (table:from-json-file config_filepath )
   set seconds_per_tick (table:get config "seconds_per_tick")
   set max_seconds (table:get config "max_seconds")
-  ; Tsunami inundation scale
   set min_flow_depth (table:get config "min_flow_depth") ;
   set max_flow_depth (table:get config "max_flow_depth")
-  ; Outputs
-  set pedestrian_status_list (list ["moving" "evacuated" "dead"])
+
   ; Output prints
   output-print ( word "[data_path]: " absolute_data_path )
   output-print ( word "[agent_distribution_type]: " population_scenario )
@@ -177,41 +180,34 @@ to initial-values
   output-print ( word "[max_seconds]: " max_seconds )
   output-print ( word "[min_flow_depth]: " min_flow_depth )
   output-print ( word "[max_flow_depth]: " max_flow_depth )
-  ; Output folder
+  ; Outputs
+  set pedestrian_status_list (list ["moving" "evacuated" "dead"])  ; Store pedestrian status
   set absolute_output_path ( word absolute_data_path pathdir:get-separator "output" )
   if behaviorspace-experiment-name != "" [
     set absolute_output_path ( word absolute_output_path pathdir:get-separator behaviorspace-experiment-name pathdir:get-separator behaviorspace-run-number )
   ]
   if not pathdir:isDirectory? absolute_output_path [ pathdir:create absolute_output_path ]
   output-print ( word "[absolute_output_path]: " absolute_output_path)
-
   output-print ( word date-and-time " - Initial values loaded" )
 end
 
 
 to read-gis-files
-  gis:load-coordinate-system (word absolute_data_path pathdir:get-separator "urban" pathdir:get-separator "urban_network.prj")
+  gis:load-coordinate-system (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator tsunami_scenario pathdir:get-separator "0.prj")
+  set tsunami_sample_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator tsunami_scenario pathdir:get-separator "0.asc")
   set urban_network_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "urban" pathdir:get-separator "urban_network.shp")
   set node_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "urban" pathdir:get-separator "urban_nodes.shp")
   set vertical_evacuation_mask_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "urban" pathdir:get-separator "vertical_evacuation_mask.shp")
   set shelter_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "shelters" pathdir:get-separator "shelters_node.shp")
   set population_areas_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "population" pathdir:get-separator population_scenario pathdir:get-separator "population_areas.shp")
-  set tsunami_sample_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "tsunami_inundation" pathdir:get-separator tsunami_scenario pathdir:get-separator "0.asc")
-  resize-world 0 gis:width-of tsunami_sample_dataset 0 gis:height-of tsunami_sample_dataset
-  let world_envelope (
-    gis:envelope-union-of
-      (gis:envelope-of urban_network_dataset)
-      (gis:envelope-of node_dataset)
-      (gis:envelope-of shelter_dataset)
-      (gis:envelope-of population_areas_dataset)
-      (gis:envelope-of tsunami_sample_dataset)
-  )
-  gis:set-world-envelope-ds world_envelope                                                                ; transformation from real world to netlogo world
+  resize-world 0 gis:width-of tsunami_sample_dataset 0 gis:height-of tsunami_sample_dataset  ; NetLogo world have the same of patches than tsunami raster
+  let world_envelope ( gis:envelope-of tsunami_sample_dataset )  ; Envelope is only tsunami raster
+  gis:set-world-envelope-ds world_envelope  ; Transformation from real world to netlogo world
   ; Transform parameters from meters to patchs
-  let gis_world_width (item 1 world_envelope - item 0 world_envelope)                                     ; real world width in meters
-  let gis_world_height (item 3 world_envelope - item 2 world_envelope)                                    ; real world height in meters
+  let gis_world_width (item 1 world_envelope - item 0 world_envelope)  ; Real world width in meters
+  let gis_world_height (item 3 world_envelope - item 2 world_envelope)  ; Real world height in meters
   set meters_per_patch max (list (gis_world_height / world-width) (gis_world_height / world-height))
-  set reach_node_tolerance (0.1 / meters_per_patch)  ; 10 cm
+  set reach_node_tolerance (0.2 / meters_per_patch)  ; 20 cm default
   set alternate_shelter_radius (alternative_shelter_radius_meters / meters_per_patch)
   ; Output printing
   output-print ( word "[meters_per_patch]: " meters_per_patch )
@@ -259,7 +255,7 @@ to load-shelters
       ]
     ]
   ]
-  set shelters_agenset nodes with [shelter?]
+  set shelters_agenset ( nodes with [shelter?] )
   output-print ( word date-and-time " - Sheltersloaded" )
 end
 
@@ -285,6 +281,8 @@ end
 
 
 to load-evacuation-routes
+  ; Evacuation routes are json files where each key is the id of each node and values are a list of nodes id representing the route to a shelter.
+  ; However, alternative shelter routes are multiples, from each vertical shelter to any other vertical shelter, then keys are "{id_shelter1}&{id_shelter2}"
   let horizontal_routes_tmp table:from-json-file ( word
     absolute_data_path
     pathdir:get-separator
@@ -312,6 +310,7 @@ to load-evacuation-routes
     pathdir:get-separator
     "alternative_evacuation_routes.json"
   )
+  ; Translate dataset id to "who" of each node
   set horizontal_routes table:make
   set vertical_routes table:make
   set alternative_shelter_routes table:make
@@ -335,7 +334,7 @@ end
 
 
 to update-tsunami-inundation
-  ; Load tsunamis raster
+  ; Load tsunamis raster in each tick.
   let seconds int(ticks * seconds_per_tick)
   let tsunami_dataset gis:load-dataset ( word
     absolute_data_path
@@ -351,20 +350,11 @@ to update-tsunami-inundation
   gis:apply-raster tsunami_dataset flow_depth
   ask patches with [not ((flow_depth <= 0) or (flow_depth >= 0))][set flow_depth 0]
   ask patches [ set pcolor scale-color blue flow_depth 0 max_flow_depth ]
-  ;apply-tsunami-raster tsunami_dataset min_flow_depth max_flow_depth
 end
 
 
-;to apply-tsunami-raster [tsunami min_depth max_depth]
-;  gis:apply-raster tsunami flow_depth
-;  ; ask patches with [flow_depth = -9999][set flow_depth 0]  ; TODO: change -9999
-;  ask patches with [not ((flow_depth <= 0) or (flow_depth >= 0))][set flow_depth 0]
-;  ask patches [ set pcolor scale-color blue flow_depth min_depth max_depth ]
-;end
-
-
 to load-pedestrians
-  ; load pedestrian distribution
+  ; Load pedestrian distribution
   ask pedestrians [ die ]
   set population_age_table table:from-list (
     csv:from-file (word absolute_data_path pathdir:get-separator "population" pathdir:get-separator "population_age.csv")
@@ -376,7 +366,7 @@ to load-pedestrians
   let departure_time_mean (departure_time_mean_in_sec / seconds_per_tick)
   foreach gis:feature-list-of population_areas_dataset [ row ->
     let n gis:property-value row "population"
-    gis:create-turtles-inside-polygon row pedestrians (n / 50 ) [  ; You can change this if you want to simulate with few pedestrians
+    gis:create-turtles-inside-polygon row pedestrians (n / 1 ) [  ; You can change this if you want to simulate with few pedestrians
       set size 6
       set shape "circle"
       set init_x xcor
@@ -403,6 +393,7 @@ end
 
 
 to make-evacuation-decision
+  ; Each pedestrian should decide if they is going to evacuate (horizontally or vertically) or not.
   ask pedestrians [
     let rnd_evacuation_willingness random-float 1  ; Random number for evacuation willigness
     ifelse ( rnd_evacuation_willingness <= evacuation_willingness_prob )
@@ -431,7 +422,7 @@ end
 
 to start-to-evacuate
   ; Validate if pedestrian must start to evacuate according their departure time
-  ask pedestrians with [not started? and depar_time <= ticks]
+  ask pedestrians with [not started? and not dead? and depar_time <= ticks]
     [
       set next_node ( min-one-of nodes [distance myself] )
       set route ( get-route next_node decision )
@@ -462,11 +453,13 @@ to set-next-node
   let rnd_confusion_ratio random-float 1  ; Random number for taking a wrong route
   ifelse ( ( rnd_confusion_ratio >= confusion_ratio ) or ( current_node = nobody ) )
   [
+    ; Pedestrian follows his original route
     set next_node ( node first route )
     set route ( but-first route )
   ]
   [
-    set next_node one-of [out-road-neighbors] of current_node  ; Pick a random neighbord node
+    ; Pedestrian got confused and pick a random node connected to his current node by a road.
+    set next_node one-of [out-road-neighbors] of current_node
     set route ( get-route next_node decision )
     set goal_shelter_id (last route )
   ]
@@ -474,16 +467,18 @@ end
 
 
 to-report get-route [from_node evacuation_decision ]
+  ; Return route according pedestrian decision
   (
     ifelse
-    evacuation_decision = "horizontal" [ report table:get horizontal_routes [who] of from_node ]
-    evacuation_decision = "vertical"   [ report table:get vertical_routes [who] of from_node ]
+    evacuation_decision = "horizontal" [ report table:get horizontal_routes ( [who] of from_node ) ]
+    evacuation_decision = "vertical"   [ report table:get vertical_routes ( [who] of from_node ) ]
                                        [ report [] ]
    )
 end
 
 
 to set-current-road
+  ; Set current road of pedestrian while their are evacuating.
   ifelse ( current_node != nobody and next_node != nobody)
   [ set current_road (road ([who] of current_node) ([who] of next_node)) ]
   [ set current_road nobody ]
@@ -491,7 +486,7 @@ end
 
 
 to move-pedestrians
-  ; Move pedestrians updating their speed
+  ; Move pedestrians and updating their speed.
   update-speed  ; Current speed updated by slope and density factors
   ask pedestrians with [moving? and not in_node?][
     ; If next node is to close then the pedestrian reach the next node
@@ -504,7 +499,7 @@ end
 
 
 to update-slope-factor
-  ; Update slope factor according to road slope
+  ; Update slope factor according to road slope.
   ; TODO: SOURCE
   if current_road != nobody [
     let slope_road ( [slope] of current_road )
@@ -514,7 +509,7 @@ end
 
 
 to update-speed
-  ; Get pedestrian density
+  ; Get pedestrian density.
   ; TODO: SOURCE
   ask pedestrians with [moving? and not in_node?][
     let slope_speed ( base_speed * slope_factor )
@@ -533,7 +528,7 @@ to update-speed
     )
     let current_width ifelse-value (current_road != nobody)
     [[sidewalk_width] of current_road]
-    [ 3 / meters_per_patch]  ; When pedestrian is not walking over a sidewalk
+    [ 3 / meters_per_patch]  ; When pedestrian is not walking over a sidewalk (3 meters by default)
     let pedestrian_density (n_pedestrians_ahead / (current_width * max_distance_to_move))
     set speed (speed-density slope_speed pedestrian_density )
   ]
@@ -556,7 +551,7 @@ to-report speed-density [speed_p density_p]
 end
 
 to check-reach-node
-  ; Check if pedestrian has reached next node
+  ; Check if pedestrian has reached next node.
   let distance_to_next_node distance next_node
   if (distance_to_next_node < reach_node_tolerance ) [
     fd distance_to_next_node
@@ -573,7 +568,7 @@ end
 
 
 to mark-evacuated
-  ; Mark pedestrian as evacuated
+  ; Mark pedestrian as evacuated.
   set speed 0
   set evacuated? true
   set moving? false
@@ -584,23 +579,18 @@ end
 
 
 to alternate-route
-  ; TODO: MUCHO TRABAJO AQUI
   ; Look for an alternative route.
   ; The pedestrian will try to go to a horizontal shelter if there is any close to them,
   ; if not, it will go to another vertical shelter.
-  let who_current_shelter ( [who] of current_node)
-  print ( word "pedestrian " ( [who] of self ) " reached node " who_current_shelter)
-  let vertical_shelters_in_radius ( nodes with [shelter? and evac_type = "vertical" and ( who != who_current_shelter )] in-radius alternate_shelter_radius )
-  let horizontal_shelters_in_radius ( nodes with [shelter? and evac_type = "horizontal"] in-radius alternate_shelter_radius )
+  ; But if there is no shelter in the fixed radius, then pedestrian will pick closest horizontal shelter.
+  let who_of_current_shelter ( [who] of current_node )
+  let shelters_in_radius ( shelters_agenset with [ who !=  who_of_current_shelter ] in-radius alternate_shelter_radius )  ; Radius is about pedestrian
+  let vertical_shelters_in_radius ( shelters_in_radius with [ evac_type = "vertical" ] )
+  let horizontal_shelters_in_radius ( shelters_in_radius with [ evac_type = "horizontal" ] )
   ifelse ( any? horizontal_shelters_in_radius ) [
-    print (word "horizontal_shelters " horizontal_shelters_in_radius )
-    print (one-of horizontal_shelters_in_radius )
-    print ([who] of current_node )
     set decision "horizontal"
     set color yellow
-    set route ( table:get horizontal_routes ( [who] of current_node) )
-    print "Routing to a close horizontal shelter"
-
+    set route ( table:get horizontal_routes who_of_current_shelter )
     print ( word "new route (len " length(route) ") : " route )
   ]
   [
@@ -608,25 +598,20 @@ to alternate-route
       let random_vertical_shelter ( [who] of (one-of vertical_shelters_in_radius) )
       let route_key ( word ( [who] of current_node ) "&" random_vertical_shelter )
       set route ( table:get alternative_shelter_routes route_key )
-      print "Routing to another vertical shelter"
     ][
       set decision "horizontal"
       set color yellow
-      set route ( table:get horizontal_routes ( [who] of current_node) )
-      print "Routing to closest horizontal shelter"
-      print ( word "new route (len " length(route) ") : " route )
+      set route ( table:get horizontal_routes who_of_current_shelter )
     ]
   ]
   set goal_shelter_id (last route )
-
-;  wait 5  ; erase after debuging
 end
 
 
 to update-dead-pedestrians
   ; Update if pedestrians are alive or not
   ask pedestrians with [not dead? and not evacuated?][
-    let flow_depth_here [flow_depth] of patch-here
+    let flow_depth_here ( [flow_depth] of patch-here )
     if flow_depth_here >= flow_depth_threshold
       [
         set speed 0
@@ -735,12 +720,12 @@ to setup
   clear-all
   reset-ticks
   reset-timer
-  output-print (word "--- Tsunami Vertical Evacuation Simulation ---" )
+  output-print (" --- Tsunami Vertical Evacuation Simulation ---" )
   if (behaviorspace-experiment-name != "") [
-    output-print (word "Experiment: " behaviorspace-experiment-name " - Run " behaviorspace-run-number)
+    output-print (word " Experiment: " behaviorspace-experiment-name " - Run " behaviorspace-run-number)
   ]
-  output-print (word date-and-time " - Starting simulation" )
   initial-values
+  output-print (word date-and-time " - Starting simulation" )
   read-gis-files
   load-nodes
   load-shelters
@@ -903,7 +888,7 @@ INPUTBOX
 161
 442
 evacuation_willingness_prob
-0.9
+1.0
 1
 0
 Number
@@ -914,7 +899,7 @@ INPUTBOX
 161
 521
 vert_evacuation_willingness_prob
-1.0
+0.0
 1
 0
 Number
@@ -956,7 +941,7 @@ CHOOSER
 population_scenario
 population_scenario
 "daytime" "nighttime"
-1
+0
 
 CHOOSER
 5
@@ -1459,7 +1444,7 @@ NetLogo 6.2.1
       <value value="500"/>
     </enumeratedValueSet>
   </experiment>
-  <experiment name="vina_del_mar_vertical_dt180" repetitions="10" runMetricsEveryStep="true">
+  <experiment name="vina_del_mar_vertical25_dt180" repetitions="10" sequentialRunOrder="false" runMetricsEveryStep="true">
     <setup>setup</setup>
     <go>go</go>
     <metric>count pedestrians with [moving?]</metric>
@@ -1487,7 +1472,6 @@ NetLogo 6.2.1
     </enumeratedValueSet>
     <enumeratedValueSet variable="vert_evacuation_willingness_prob">
       <value value="0.25"/>
-      <value value="0.75"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="confusion_ratio">
       <value value="0.1"/>
@@ -1499,7 +1483,7 @@ NetLogo 6.2.1
       <value value="500"/>
     </enumeratedValueSet>
   </experiment>
-  <experiment name="vina_del_mar_vertical_dt480" repetitions="10" runMetricsEveryStep="true">
+  <experiment name="vina_del_mar_vertical25_dt480" repetitions="10" runMetricsEveryStep="true">
     <setup>setup</setup>
     <go>go</go>
     <metric>count pedestrians with [moving?]</metric>
@@ -1527,7 +1511,6 @@ NetLogo 6.2.1
     </enumeratedValueSet>
     <enumeratedValueSet variable="vert_evacuation_willingness_prob">
       <value value="0.25"/>
-      <value value="0.75"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="confusion_ratio">
       <value value="0.1"/>
@@ -1539,7 +1522,7 @@ NetLogo 6.2.1
       <value value="500"/>
     </enumeratedValueSet>
   </experiment>
-  <experiment name="vina_del_mar_vertical_dt660" repetitions="10" runMetricsEveryStep="true">
+  <experiment name="vina_del_mar_vertical25_dt660" repetitions="10" runMetricsEveryStep="true">
     <setup>setup</setup>
     <go>go</go>
     <metric>count pedestrians with [moving?]</metric>
@@ -1567,7 +1550,6 @@ NetLogo 6.2.1
     </enumeratedValueSet>
     <enumeratedValueSet variable="vert_evacuation_willingness_prob">
       <value value="0.25"/>
-      <value value="0.75"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="confusion_ratio">
       <value value="0.1"/>
@@ -1685,6 +1667,123 @@ NetLogo 6.2.1
     </enumeratedValueSet>
     <enumeratedValueSet variable="vert_evacuation_willingness_prob">
       <value value="0"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="confusion_ratio">
+      <value value="0.1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="departure_time_mean_in_sec">
+      <value value="660"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="alternative_shelter_radius_meters">
+      <value value="500"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="vina_del_mar_vertical75_dt180" repetitions="10" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metric>count pedestrians with [moving?]</metric>
+    <metric>count pedestrians with [dead?]</metric>
+    <metric>count pedestrians with [evacuated?]</metric>
+    <enumeratedValueSet variable="data_path">
+      <value value="&quot;vina_del_mar&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="tsunami_scenario">
+      <value value="&quot;tsunami_1985&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="population_scenario">
+      <value value="&quot;daytime&quot;"/>
+      <value value="&quot;nighttime&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_route_type">
+      <value value="&quot;shortest&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="flow_depth_threshold">
+      <value value="0.1"/>
+      <value value="0.5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_willingness_prob">
+      <value value="1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="vert_evacuation_willingness_prob">
+      <value value="0.75"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="confusion_ratio">
+      <value value="0.1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="departure_time_mean_in_sec">
+      <value value="180"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="alternative_shelter_radius_meters">
+      <value value="500"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="vina_del_mar_vertical75_dt480" repetitions="10" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metric>count pedestrians with [moving?]</metric>
+    <metric>count pedestrians with [dead?]</metric>
+    <metric>count pedestrians with [evacuated?]</metric>
+    <enumeratedValueSet variable="data_path">
+      <value value="&quot;vina_del_mar&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="tsunami_scenario">
+      <value value="&quot;tsunami_1985&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="population_scenario">
+      <value value="&quot;daytime&quot;"/>
+      <value value="&quot;nighttime&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_route_type">
+      <value value="&quot;shortest&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="flow_depth_threshold">
+      <value value="0.1"/>
+      <value value="0.5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_willingness_prob">
+      <value value="1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="vert_evacuation_willingness_prob">
+      <value value="0.75"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="confusion_ratio">
+      <value value="0.1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="departure_time_mean_in_sec">
+      <value value="480"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="alternative_shelter_radius_meters">
+      <value value="500"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="vina_del_mar_vertical75_dt660" repetitions="10" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metric>count pedestrians with [moving?]</metric>
+    <metric>count pedestrians with [dead?]</metric>
+    <metric>count pedestrians with [evacuated?]</metric>
+    <enumeratedValueSet variable="data_path">
+      <value value="&quot;vina_del_mar&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="tsunami_scenario">
+      <value value="&quot;tsunami_1985&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="population_scenario">
+      <value value="&quot;daytime&quot;"/>
+      <value value="&quot;nighttime&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_route_type">
+      <value value="&quot;shortest&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="flow_depth_threshold">
+      <value value="0.1"/>
+      <value value="0.5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evacuation_willingness_prob">
+      <value value="1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="vert_evacuation_willingness_prob">
+      <value value="0.75"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="confusion_ratio">
       <value value="0.1"/>
