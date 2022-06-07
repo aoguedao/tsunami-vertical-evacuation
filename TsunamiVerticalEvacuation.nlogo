@@ -168,12 +168,14 @@ to initial-values
 
   ; Output prints
   output-print ( word "[data_path]: " absolute_data_path )
-  output-print ( word "[agent_distribution_type]: " population_scenario )
+  output-print ( word "[tsunami_scenario]: " tsunami_scenario )
+  output-print ( word "[population_scenario]: " population_scenario )
   output-print ( word "[evacuation_route_type]: " evacuation_route_type )
   output-print ( word "[flow_depth_threshold]: " flow_depth_threshold )
   output-print ( word "[evacuation_willingness_prob]: " evacuation_willingness_prob )
   output-print ( word "[vert_evacuation_willingness_prob]: " vert_evacuation_willingness_prob )
   output-print ( word "[confusion_ratio]: " confusion_ratio )
+  output-print ( word "[departure_time_mean_in_sec]: " departure_time_mean_in_sec )
   output-print ( word "[alternate_shelter_radius_meters]: " alternative_shelter_radius_meters )
   output-print ( word "[config_filepath]: " config_filepath )
   output-print ( word "[seconds_per_tick]: " seconds_per_tick  )
@@ -591,7 +593,6 @@ to alternate-route
     set decision "horizontal"
     set color yellow
     set route ( table:get horizontal_routes who_of_current_shelter )
-    print ( word "new route (len " length(route) ") : " route )
   ]
   [
     ifelse ( any? vertical_shelters_in_radius) [
