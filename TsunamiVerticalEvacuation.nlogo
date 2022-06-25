@@ -202,8 +202,12 @@ to read-gis-files
   set vertical_evacuation_mask_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "urban" pathdir:get-separator "vertical_evacuation_mask.shp")
   set shelter_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "shelters" pathdir:get-separator "shelters_node.shp")
   set population_areas_dataset gis:load-dataset (word absolute_data_path pathdir:get-separator "population" pathdir:get-separator population_scenario pathdir:get-separator "population_areas.shp")
-  resize-world 0 gis:width-of tsunami_sample_dataset 0 gis:height-of tsunami_sample_dataset  ; NetLogo world have the same of patches than tsunami raster
-  let world_envelope ( gis:envelope-of tsunami_sample_dataset )  ; Envelope is only tsunami raster
+  ; Resize netlogo world
+  let world_columns ( gis:width-of tsunami_sample_dataset - 1 )
+  let world_rows ( gis:height-of tsunami_sample_dataset  - 1 )
+  resize-world 0 world_columns 0 world_rows
+  ; Envelope
+  let world_envelope ( gis:envelope-of tsunami_sample_dataset )  ; Envelope is given only by tsunami raster
   gis:set-world-envelope-ds world_envelope  ; Transformation from real world to netlogo world
   ; Transform parameters from meters to patchs
   let gis_world_width (item 1 world_envelope - item 0 world_envelope)  ; Real world width in meters
@@ -219,8 +223,10 @@ to read-gis-files
   ; Apply vertical evacuation property to patches
   gis:apply-coverage vertical_evacuation_mask_dataset "VERT_EVAC" vertical_evacuation?
   ask patches with [vertical_evacuation? = 1] [set vertical_evacuation? true]
-  gis:set-drawing-color 135
-  gis:draw vertical_evacuation_mask_dataset 5
+  if vert_evacuation_willingness_prob > 0 [
+    gis:set-drawing-color 135
+    gis:draw vertical_evacuation_mask_dataset 5
+  ]
 end
 
 
@@ -368,7 +374,7 @@ to load-pedestrians
   let departure_time_mean (departure_time_mean_in_sec / seconds_per_tick)
   foreach gis:feature-list-of population_areas_dataset [ row ->
     let n gis:property-value row "population"
-    gis:create-turtles-inside-polygon row pedestrians (n / 1 ) [  ; You can change this if you want to simulate with few pedestrians
+    gis:create-turtles-inside-polygon row pedestrians (n / 100 ) [  ; You can change this if you want to simulate with few pedestrians
       set size 6
       set shape "circle"
       set init_x xcor
@@ -391,6 +397,12 @@ to load-pedestrians
   make-evacuation-decision
   ask patches [set init_pedestrians (count turtles-here)]  ; Initial count of pedestrians in each patch
   output-print ( word date-and-time " - Pedestrians Loaded" )
+  ; Store initial distribution
+  ; let initial_pedestrian_distribution_filepath (word absolute_output_path pathdir:get-separator "initial_pedestrian_distribution.shp")
+  ; if file-exists? initial_pedestrian_distribution_filepath [ file-delete initial_pedestrian_distribution_filepath ]
+  ; let initial_pedestrian_distribution ( gis:turtle-dataset pedestrians )
+  ; gis:store-dataset initial_pedestrian_distribution initial_pedestrian_distribution_filepath
+  ; output-print ( word date-and-time " - Initial pedestrian distribution has been successfully written" )
 end
 
 
@@ -642,7 +654,7 @@ end
 
 
 to write-output
-  ; Shelters output
+  ; Shelter-tick output
   let shelter_evacuation_output (word absolute_output_path pathdir:get-separator "shelters_evacuation.csv")
   if file-exists? shelter_evacuation_output [ file-delete shelter_evacuation_output ]
   let shelter_evacuation_matrix matrix:from-row-list [evacuee_count_list] of turtle-set sort shelters_agenset
@@ -650,13 +662,28 @@ to write-output
   let shelter_evacuation_list sentence shelter_osm_id matrix:to-column-list shelter_evacuation_matrix
   csv:to-file shelter_evacuation_output shelter_evacuation_list
   output-print (word date-and-time " - Shelters output has been successfully written" )
+
+  ; Shelter output
+  let shelters_output ( word absolute_output_path pathdir:get-separator "shelters.shp" )
+  let shelters_gis_dataset ( gis:turtle-dataset nodes with [shelter?])
+  if file-exists? shelters_output [ file-delete shelters_output ]
+  gis:store-dataset shelters_gis_dataset shelters_output
+
   ; Pedestrian-tick output
   let pedestrian_tick_output (word absolute_output_path pathdir:get-separator "pedestrian_ticks.csv")
   if file-exists? pedestrian_tick_output [ file-delete pedestrian_tick_output ]
   csv:to-file pedestrian_tick_output pedestrian_status_list
   output-print (word date-and-time " - Pedestrian status per tick output has been successfully written" )
+
   ; Pedestrian output
-  let pedestrian_output (word absolute_output_path pathdir:get-separator "pedestrians.csv")
+  ask pedestrians [setxy init_x init_y]
+  let pedestrians_output ( word absolute_output_path pathdir:get-separator "pedestrians.shp" )
+  let pedestrians_gis_dataset ( gis:turtle-dataset pedestrians )
+  if file-exists? pedestrians_output [ file-delete pedestrians_output ]
+  gis:store-dataset pedestrians_gis_dataset pedestrians_output
+
+
+  let pedestrian_output ( word absolute_output_path pathdir:get-separator "pedestrians.csv" )
   if file-exists? pedestrian_output [ file-delete pedestrian_output ]
   let pedestrian_output_list ( sentence
     [
@@ -687,7 +714,7 @@ to write-output
         age
         depar_time
         base_speed
-        ifelse-value (current_node != nobody) [[id] of current_node] [""]
+        ifelse-value ( current_node != nobody ) [[id] of current_node] [""]
         total_distance
         end_time
         moving?
@@ -697,21 +724,29 @@ to write-output
     ] of pedestrians
   )
   csv:to-file pedestrian_output pedestrian_output_list
-  output-print (word date-and-time " - Pedestrian output has been successfully written" )
+  output-print ( word date-and-time " - Pedestrian output has been successfully written" )
+
   ; Patches as raster
-  let patch_dataset (gis:patch-dataset init_pedestrians)
-  let patch_output (word absolute_output_path pathdir:get-separator "initial_population_distribution")
+  let patch_dataset ( gis:patch-dataset init_pedestrians)
+  let patch_output ( word absolute_output_path pathdir:get-separator "initial_population_distribution" )
   if file-exists? patch_output [ file-delete patch_output ]
   gis:store-dataset patch_dataset patch_output
-  output-print (word date-and-time " - Initial pedestrian distribution output has been successfully written" )
+  output-print ( word date-and-time " - Initial pedestrian distribution output has been successfully written" )
+
   ; World Output
-  let world_output (word absolute_output_path pathdir:get-separator "world_output.csv")
+  let world_output ( word absolute_output_path pathdir:get-separator "world_output.csv" )
   if file-exists? world_output [ file-delete world_output ]
   export-world world_output
-  output-print (word date-and-time " - NetLogo world has been successfully written" )
+  output-print ( word date-and-time " - NetLogo world has been successfully written" )
+
+  ; View output
+  let view_output ( word absolute_output_path pathdir:get-separator "initial_position_vs_final_status.png" )
+  if file-exists? view_output [ file-delete view_output ]
+  export-view view_output
+
   ; Simulation Output
-  output-print (word date-and-time " - Simulation has finalized and it took " timer " seconds (" (precision (timer / 60) 3 ) " minutes).")
-  let simulation_output (word absolute_output_path pathdir:get-separator "scenario_output.txt")
+  output-print ( word date-and-time " - Simulation has finalized and it took " timer " seconds (" (precision (timer / 60) 3 ) " minutes)." )
+  let simulation_output ( word absolute_output_path pathdir:get-separator "scenario_output.txt" )
   if file-exists? simulation_output [ file-delete simulation_output ]
   export-output simulation_output
 end
@@ -772,8 +807,8 @@ end
 GRAPHICS-WINDOW
 170
 10
-1027
-720
+1026
+719
 -1
 -1
 1.0
@@ -787,9 +822,9 @@ GRAPHICS-WINDOW
 0
 1
 0
-848
+847
 0
-700
+699
 0
 0
 1
@@ -900,7 +935,7 @@ INPUTBOX
 161
 521
 vert_evacuation_willingness_prob
-0.0
+0.25
 1
 0
 Number
@@ -971,7 +1006,7 @@ INPUTBOX
 159
 183
 tsunami_scenario
-tsunami_1985
+tsunami_1730
 1
 0
 String
@@ -1333,7 +1368,7 @@ NetLogo 6.2.1
       <value value="&quot;vina_del_mar&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="tsunami_scenario">
-      <value value="&quot;tsunami_1985&quot;"/>
+      <value value="&quot;tsunami_1730&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="population_scenario">
       <value value="&quot;daytime&quot;"/>
@@ -1374,7 +1409,7 @@ NetLogo 6.2.1
       <value value="&quot;vina_del_mar&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="tsunami_scenario">
-      <value value="&quot;tsunami_1985&quot;"/>
+      <value value="&quot;tsunami_1730&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="population_scenario">
       <value value="&quot;daytime&quot;"/>
@@ -1416,7 +1451,7 @@ NetLogo 6.2.1
       <value value="&quot;vina_del_mar&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="tsunami_scenario">
-      <value value="&quot;tsunami_1985&quot;"/>
+      <value value="&quot;tsunami_1730&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="population_scenario">
       <value value="&quot;daytime&quot;"/>
@@ -1455,7 +1490,7 @@ NetLogo 6.2.1
       <value value="&quot;vina_del_mar&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="tsunami_scenario">
-      <value value="&quot;tsunami_1985&quot;"/>
+      <value value="&quot;tsunami_1730&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="population_scenario">
       <value value="&quot;daytime&quot;"/>
@@ -1494,7 +1529,7 @@ NetLogo 6.2.1
       <value value="&quot;vina_del_mar&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="tsunami_scenario">
-      <value value="&quot;tsunami_1985&quot;"/>
+      <value value="&quot;tsunami_1730&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="population_scenario">
       <value value="&quot;daytime&quot;"/>
@@ -1533,7 +1568,7 @@ NetLogo 6.2.1
       <value value="&quot;vina_del_mar&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="tsunami_scenario">
-      <value value="&quot;tsunami_1985&quot;"/>
+      <value value="&quot;tsunami_1730&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="population_scenario">
       <value value="&quot;daytime&quot;"/>
@@ -1572,7 +1607,7 @@ NetLogo 6.2.1
       <value value="&quot;vina_del_mar&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="tsunami_scenario">
-      <value value="&quot;tsunami_1985&quot;"/>
+      <value value="&quot;tsunami_1730&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="population_scenario">
       <value value="&quot;daytime&quot;"/>
@@ -1611,7 +1646,7 @@ NetLogo 6.2.1
       <value value="&quot;vina_del_mar&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="tsunami_scenario">
-      <value value="&quot;tsunami_1985&quot;"/>
+      <value value="&quot;tsunami_1730&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="population_scenario">
       <value value="&quot;daytime&quot;"/>
@@ -1650,7 +1685,7 @@ NetLogo 6.2.1
       <value value="&quot;vina_del_mar&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="tsunami_scenario">
-      <value value="&quot;tsunami_1985&quot;"/>
+      <value value="&quot;tsunami_1730&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="population_scenario">
       <value value="&quot;daytime&quot;"/>
@@ -1689,7 +1724,7 @@ NetLogo 6.2.1
       <value value="&quot;vina_del_mar&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="tsunami_scenario">
-      <value value="&quot;tsunami_1985&quot;"/>
+      <value value="&quot;tsunami_1730&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="population_scenario">
       <value value="&quot;daytime&quot;"/>
@@ -1728,7 +1763,7 @@ NetLogo 6.2.1
       <value value="&quot;vina_del_mar&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="tsunami_scenario">
-      <value value="&quot;tsunami_1985&quot;"/>
+      <value value="&quot;tsunami_1730&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="population_scenario">
       <value value="&quot;daytime&quot;"/>
@@ -1767,7 +1802,7 @@ NetLogo 6.2.1
       <value value="&quot;vina_del_mar&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="tsunami_scenario">
-      <value value="&quot;tsunami_1985&quot;"/>
+      <value value="&quot;tsunami_1730&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="population_scenario">
       <value value="&quot;daytime&quot;"/>
