@@ -374,7 +374,7 @@ to load-pedestrians
   let departure_time_mean (departure_time_mean_in_sec / seconds_per_tick)
   foreach gis:feature-list-of population_areas_dataset [ row ->
     let n gis:property-value row "population"
-    gis:create-turtles-inside-polygon row pedestrians (n / 100 ) [  ; You can change this if you want to simulate with few pedestrians
+    gis:create-turtles-inside-polygon row pedestrians (n / 1 ) [  ; You can change this if you want to simulate with few pedestrians
       set size 6
       set shape "circle"
       set init_x xcor
